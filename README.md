@@ -2,6 +2,8 @@
 A VARA transporter for the Pat Winlink Open Source project.
 
 ## Status:
+**9/2/2021**: Added the VARA command set to the repository.
+
 As of 8/27/2021, the project is still in early phases.  Coomunication has been established between a terminal and the VARA software modem in both HF and FM versions.  The command set has been analyzed.  The next big step is evaluating what commands are sent in what order and what the payload consists of.  What we know so far is:
 
 - VARA communicates over TCP/IP with commands sent to port 8300 by default and 

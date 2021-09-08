@@ -18,8 +18,4 @@ func TestInterfaces(t *testing.T) {
 	// Ensure modem implements optional interfaces with extended functionality
 	var _ net.Listener = modem
 	var _ transport.BusyChannelChecker = modem
-	var _ transport.Flusher = modem
-	var _ transport.PTTController = modem
-	var _ transport.Robust = modem
-	var _ transport.TxBuffer = modem
 }

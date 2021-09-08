@@ -1,7 +1,10 @@
 package vara
 
 import (
+	"errors"
+	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/la5nta/wl2k-go/transport"
 )
@@ -9,29 +12,58 @@ import (
 // Implementations for various wl2k-go/transport interfaces.
 
 func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
-	return nil, notImplemented
+	if url.Scheme != network {
+		return nil, transport.ErrUnsupportedScheme
+	}
+	if m.cmdConn == nil {
+		if err := m.start(); err != nil {
+			return nil, err
+		}
+	}
+
+	err := m.setBandwidth(url)
+	if err != nil {
+		return nil, err
+	}
+
+	m.toCall = url.Target
+	err = m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall))
+	if err != nil {
+		return nil, err
+	}
+
+	if <-m.connected != 'c' {
+		_ = m.Close()
+		return nil, errors.New("connection failed")
+	}
+
+	return m, nil
 }
 
-// TxBufferLen returns the number of bytes in the out buffer queue.
-func (m *Modem) TxBufferLen() int {
-	return 0
-}
-
-// Flush flushes the transmit buffers of the underlying modem.
-func (m *Modem) Flush() error {
-	return notImplemented
+func (m *Modem) setBandwidth(url *transport.URL) error {
+	var bandwidth int
+	bw := url.Params.Get("bw")
+	if bw != "" {
+		var err error
+		bandwidth, err = strconv.Atoi(bw)
+		if err != nil {
+			return fmt.Errorf("parsing bw: %w", err)
+		}
+	}
+	if bandwidth != 500 && bandwidth != 2750 {
+		bandwidth = 2300
+	}
+	return m.writeCmd(fmt.Sprintf("BW%d", bandwidth))
 }
 
 // Busy returns true if the channel is not clear.
 func (m *Modem) Busy() bool {
-	return true
+	return m.busy
 }
 
-func (m *Modem) SetPTT(on bool) error {
-	return notImplemented
-}
-
-// SetRobust enables/disables robust mode.
-func (m *Modem) SetRobust(r bool) error {
-	return notImplemented
+// SetPTT Sets the PTT (probably a transceiver) that should be controlled by the TNC.
+//
+// If nil, the PTT request from the TNC is ignored.
+func (m *Modem) SetPTT(ptt transport.PTTController) {
+	m.rig = ptt
 }

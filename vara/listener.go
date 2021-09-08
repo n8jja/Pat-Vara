@@ -7,10 +7,11 @@ import "net"
 
 // Accept waits for and returns the next connection to the listener.
 func (m *Modem) Accept() (net.Conn, error) {
-	return nil, notImplemented
+	// TODO: VARA command is "LISTEN ON"
+	return nil, errNotImplemented
 }
 
 // Addr returns the listener's network address.
 func (m *Modem) Addr() net.Addr {
-	return nil
+	return m.LocalAddr()
 }

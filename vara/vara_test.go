@@ -12,8 +12,8 @@ func TestInterfaces(t *testing.T) {
 
 	// Ensure modem implements the necessary interfaces
 	// (https://github.com/la5nta/pat/wiki/Adding-transports)
-	var _ net.Conn = modem
 	var _ transport.Dialer = modem
+	// Modem doesn't need to implement net.Conn, but DialURL should return one
 
 	// Ensure modem implements optional interfaces with extended functionality
 	var _ net.Listener = modem

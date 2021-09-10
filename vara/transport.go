@@ -15,29 +15,41 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 	if url.Scheme != network {
 		return nil, transport.ErrUnsupportedScheme
 	}
+
+	// Open the VARA command TCP port if it isn't
 	if m.cmdConn == nil {
 		if err := m.start(); err != nil {
 			return nil, err
 		}
 	}
 
-	err := m.setBandwidth(url)
-	if err != nil {
+	// Open the VARA data TCP port if it isn't
+	if m.dataConn == nil {
+		var err error
+		if m.dataConn, err = m.connectTCP("data", m.config.DataPort); err != nil {
+			return nil, err
+		}
+	}
+
+	// Set bandwidth from the URL
+	if err := m.setBandwidth(url); err != nil {
 		return nil, err
 	}
 
+	// Start connecting
 	m.toCall = url.Target
-	err = m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall))
-	if err != nil {
+	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall)); err != nil {
 		return nil, err
 	}
 
-	if <-m.connected != 'c' {
-		_ = m.Close()
+	// Block until connected
+	if <-m.connectChange != connected {
+		m.dataConn = nil
 		return nil, errors.New("connection failed")
 	}
 
-	return m, nil
+	// Hand the VARA data TCP port to the client code
+	return &varaDataConn{*m.dataConn, *m}, nil
 }
 
 func (m *Modem) setBandwidth(url *transport.URL) error {
@@ -61,9 +73,10 @@ func (m *Modem) Busy() bool {
 	return m.busy
 }
 
-// SetPTT Sets the PTT (probably a transceiver) that should be controlled by the TNC.
+// SetPTT sets the PTTController (probably hooked to a transceiver) that should be controlled by the
+// modem.
 //
-// If nil, the PTT request from the TNC is ignored.
+// If nil, the PTT request from the TNC is ignored. VOX may still work.
 func (m *Modem) SetPTT(ptt transport.PTTController) {
 	m.rig = ptt
 }

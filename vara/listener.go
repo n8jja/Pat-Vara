@@ -13,5 +13,10 @@ func (m *Modem) Accept() (net.Conn, error) {
 
 // Addr returns the listener's network address.
 func (m *Modem) Addr() net.Addr {
-	return m.LocalAddr()
+	return Addr{m.myCall}
 }
+
+type Addr struct{ string }
+
+func (a Addr) Network() string { return network }
+func (a Addr) String() string  { return a.string }

@@ -12,6 +12,8 @@ import (
 	"github.com/la5nta/wl2k-go/transport"
 )
 
+const network = "vara"
+
 var errNotImplemented = errors.New("not implemented")
 
 // ModemConfig defines configuration options for connecting with the VARA modem program.
@@ -32,15 +34,23 @@ var defaultConfig = ModemConfig{
 }
 
 type Modem struct {
-	myCall    string
-	config    ModemConfig
-	cmdConn   *net.TCPConn
-	dataConn  *net.TCPConn
-	toCall    string
-	busy      bool
-	connected chan rune
-	rig       transport.PTTController
+	myCall        string
+	config        ModemConfig
+	cmdConn       *net.TCPConn
+	dataConn      *net.TCPConn
+	toCall        string
+	busy          bool
+	connectChange chan connectedState
+	lastState     connectedState
+	rig           transport.PTTController
 }
+
+type connectedState int
+
+const (
+	connected connectedState = iota
+	disconnected
+)
 
 var debug bool
 
@@ -54,28 +64,58 @@ func NewModem(myCall string, config ModemConfig) (*Modem, error) {
 	if err := mergo.Merge(&config, defaultConfig); err != nil {
 		return nil, err
 	}
-	return &Modem{myCall: myCall, config: config}, nil
+	return &Modem{
+		myCall:        myCall,
+		config:        config,
+		busy:          false,
+		connectChange: make(chan connectedState, 1),
+		lastState:     disconnected,
+	}, nil
 }
 
 // Start establishes TCP connections with the VARA modem program. This must be called before
 // sending commands to the modem.
 func (m *Modem) start() error {
+	// Open command port TCP connection
 	var err error
-	m.cmdConn, err = m.reconnect("command", m.config.CmdPort)
+	m.cmdConn, err = m.connectTCP("command", m.config.CmdPort)
 	if err != nil {
 		return err
 	}
-	m.connected = make(chan rune, 1)
-	go m.cmdListen()
 
-	m.dataConn, err = m.reconnect("data", m.config.DataPort)
-	if err != nil {
-		return err
-	}
+	// Start listening for incoming VARA commands
+	go m.cmdListen()
 	return nil
 }
 
-func (m *Modem) reconnect(name string, port int) (*net.TCPConn, error) {
+// Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
+func (m *Modem) Close() error {
+	// Send ABORT command
+	if m.cmdConn != nil {
+		if err := m.writeCmd("ABORT"); err != nil {
+			return err
+		}
+	}
+
+	// Block until VARA modem acks disconnect
+	if m.lastState == connected {
+		if <-m.connectChange != disconnected {
+			return errors.New("disconnect failed")
+		}
+	}
+
+	// Make sure to stop TX (should have already happened, but this is a backup)
+	if m.rig != nil {
+		_ = m.rig.SetPTT(false)
+	}
+
+	// Clear up internal state
+	m.toCall = ""
+	return nil
+}
+
+func (m *Modem) connectTCP(name string, port int) (*net.TCPConn, error) {
+	debugPrint(fmt.Sprintf("Connecting %s", name))
 	cmdAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", m.config.Host, port))
 	if err != nil {
 		return nil, fmt.Errorf("couldn't resolve VARA %s address: %w", name, err)
@@ -87,12 +127,23 @@ func (m *Modem) reconnect(name string, port int) (*net.TCPConn, error) {
 	return conn, nil
 }
 
+func disconnectTCP(name string, port *net.TCPConn) *net.TCPConn {
+	if port == nil {
+		return nil
+	}
+	_ = port.Close()
+	debugPrint(fmt.Sprintf("disonnected %s", name))
+	return nil
+}
+
+// wrapper around m.cmdConn.Write
 func (m *Modem) writeCmd(cmd string) error {
 	debugPrint(fmt.Sprintf("writing cmd: %v", cmd))
 	_, err := m.cmdConn.Write([]byte(cmd + "\r"))
 	return err
 }
 
+// goroutine listening for incoming commands
 func (m *Modem) cmdListen() {
 	var buf = make([]byte, 1<<16)
 	for {
@@ -113,10 +164,12 @@ func (m *Modem) cmdListen() {
 			debugPrint(fmt.Sprintf("got cmd: %v", c))
 			switch c {
 			case "PTT ON":
+				// VARA wants to start TX; send that to the PTTController
 				if m.rig != nil {
 					_ = m.rig.SetPTT(true)
 				}
 			case "PTT OFF":
+				// VARA wants to stop TX; send that to the PTTController
 				if m.rig != nil {
 					_ = m.rig.SetPTT(false)
 				}
@@ -129,11 +182,11 @@ func (m *Modem) cmdListen() {
 			case "IAMALIVE":
 				// nothing to do
 			case "DISCONNECTED":
-				m.connected <- 'd'
+				m.handleDisconnect()
 				return
 			default:
 				if strings.HasPrefix(c, "CONNECTED") {
-					m.connected <- 'c'
+					m.handleConnect()
 					break
 				}
 				if strings.HasPrefix(c, "BUFFER") {
@@ -146,6 +199,22 @@ func (m *Modem) cmdListen() {
 	}
 }
 
+func (m *Modem) handleConnect() {
+	m.lastState = connected
+	m.connectChange <- connected
+}
+
+func (m *Modem) handleDisconnect() {
+	m.lastState = disconnected
+	m.connectChange <- disconnected
+
+	// Close data port TCP connection
+	m.dataConn = disconnectTCP("data", m.dataConn)
+	// Close command port TCP connection
+	m.cmdConn = disconnectTCP("cmd", m.cmdConn)
+}
+
+// If env var VARA_DEBUG exists, log more stuff
 func debugPrint(msg string) {
 	if debug {
 		log.Print(msg)

@@ -3,6 +3,7 @@ package vara
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -154,6 +155,10 @@ func (m *Modem) cmdListen() {
 		l, err := m.cmdConn.Read(buf)
 		if err != nil {
 			debugPrint(fmt.Sprintf("cmdListen err: %v", err))
+			if errors.Is(err, io.EOF) {
+				// VARA program killed?
+				return
+			}
 			continue
 		}
 		cmds := strings.Split(string(buf[:l]), "\r")
@@ -161,41 +166,54 @@ func (m *Modem) cmdListen() {
 			if c == "" {
 				continue
 			}
-			debugPrint(fmt.Sprintf("got cmd: %v", c))
-			switch c {
-			case "PTT ON":
-				// VARA wants to start TX; send that to the PTTController
-				if m.rig != nil {
-					_ = m.rig.SetPTT(true)
-				}
-			case "PTT OFF":
-				// VARA wants to stop TX; send that to the PTTController
-				if m.rig != nil {
-					_ = m.rig.SetPTT(false)
-				}
-			case "BUSY ON":
-				m.busy = true
-			case "BUSY OFF":
-				m.busy = false
-			case "OK":
-				// nothing to do
-			case "IAMALIVE":
-				// nothing to do
-			case "DISCONNECTED":
-				m.handleDisconnect()
+			if !m.handleCmd(c) {
 				return
-			default:
-				if strings.HasPrefix(c, "CONNECTED") {
-					m.handleConnect()
-					break
-				}
-				if strings.HasPrefix(c, "BUFFER") {
-					// nothing to do
-					break
-				}
-				log.Printf("got a vara command I wasn't expecting: %v", c)
 			}
 		}
+	}
+}
+
+// handleCmd handles one command coming from the VARA modem. It returns true if listening should
+// continue or false if listening should stop.
+func (m *Modem) handleCmd(c string) bool {
+	debugPrint(fmt.Sprintf("got cmd: %v", c))
+	switch c {
+	case "PTT ON":
+		// VARA wants to start TX; send that to the PTTController
+		m.sendPTT(true)
+	case "PTT OFF":
+		// VARA wants to stop TX; send that to the PTTController
+		m.sendPTT(false)
+	case "BUSY ON":
+		m.busy = true
+	case "BUSY OFF":
+		m.busy = false
+	case "OK":
+		// nothing to do
+	case "IAMALIVE":
+		// nothing to do
+	case "PENDING":
+		// nothing to do
+	case "DISCONNECTED":
+		m.handleDisconnect()
+		return false
+	default:
+		if strings.HasPrefix(c, "CONNECTED") {
+			m.handleConnect()
+			break
+		}
+		if strings.HasPrefix(c, "BUFFER") {
+			// nothing to do
+			break
+		}
+		log.Printf("got a vara command I wasn't expecting: %v", c)
+	}
+	return true
+}
+
+func (m *Modem) sendPTT(on bool) {
+	if m.rig != nil {
+		_ = m.rig.SetPTT(on)
 	}
 }
 
@@ -217,6 +235,6 @@ func (m *Modem) handleDisconnect() {
 // If env var VARA_DEBUG exists, log more stuff
 func debugPrint(msg string) {
 	if debug {
-		log.Print(msg)
+		log.Printf("[VARA] %s", msg)
 	}
 }

@@ -36,7 +36,7 @@ func (v *varaDataConn) TxBufferLen() int {
 }
 
 // UpdateBuffer updates the buffer.
-func (v *varaDataConn) UpdateBuffer (b int){
+func (v *varaDataConn) UpdateBuffer(b int) {
 	if v == nil {
 		return
 	}

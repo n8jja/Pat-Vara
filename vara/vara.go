@@ -206,6 +206,10 @@ func (m *Modem) handleCmd(c string) bool {
 			// nothing to do
 			break
 		}
+		if strings.HasPrefix(c, "REGISTERED") {
+			// nothing to do
+			break
+		}
 		log.Printf("got a vara command I wasn't expecting: %v", c)
 	}
 	return true

@@ -53,10 +53,15 @@ const (
 	disconnected
 )
 
+var bandwidths = []string{"500", "2300", "2750"}
 var debug bool
 
 func init() {
 	debug = os.Getenv("VARA_DEBUG") != ""
+}
+
+func Bandwidths() []string {
+	return bandwidths
 }
 
 // NewModem initializes configuration for a new VARA modem client stub.

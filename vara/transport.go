@@ -61,10 +61,19 @@ func (m *Modem) setBandwidth(url *transport.URL) error {
 	if bw == "" {
 		return nil
 	}
-	if bw != "500" && bw != "2300" && bw != "2750" {
+	if !contains(bandwidths, bw) {
 		return errors.New(fmt.Sprintf("bandwidth %s not supported", bw))
 	}
 	return m.writeCmd(fmt.Sprintf("BW%s", bw))
+}
+
+func contains(c []string, s string) bool {
+	for _, e := range c {
+		if e == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Busy returns true if the channel is not clear.

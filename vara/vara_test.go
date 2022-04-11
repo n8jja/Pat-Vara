@@ -19,3 +19,10 @@ func TestInterfaces(t *testing.T) {
 	var _ net.Listener = modem
 	var _ transport.BusyChannelChecker = modem
 }
+
+func TestBandwidths(t *testing.T) {
+	bw := Bandwidths()
+	if !contains(bw, "500") || !contains(bw, "2300") || !contains(bw, "2750") {
+		t.Fail()
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/imdario/mergo"
 	"github.com/la5nta/wl2k-go/transport"
@@ -89,6 +90,9 @@ func (m *Modem) start() error {
 		return err
 	}
 
+	// channel is not busy until Vara tells otherwise
+	m.busy = false
+
 	// Start listening for incoming VARA commands
 	go m.cmdListen()
 	return nil
@@ -96,17 +100,27 @@ func (m *Modem) start() error {
 
 // Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
 func (m *Modem) Close() error {
-	// Send ABORT command
-	if m.cmdConn != nil {
-		if err := m.writeCmd("ABORT"); err != nil {
-			return err
-		}
-	}
-
 	// Block until VARA modem acks disconnect
 	if m.lastState == connected {
-		if <-m.connectChange != disconnected {
-			return errors.New("disconnect failed")
+		// Send DISCONNECT command
+		if m.cmdConn != nil {
+			if err := m.writeCmd("DISCONNECT"); err != nil {
+				return err
+			}
+		}
+
+		select {
+		case res := <-m.connectChange:
+			if res != disconnected {
+				log.Println("Disconnect failed, aborting!")
+				if err := m.writeCmd("ABORT"); err != nil {
+					return err
+				}
+			}
+		case <-time.After(time.Second * 60):
+			if err := m.writeCmd("ABORT"); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -117,6 +131,7 @@ func (m *Modem) Close() error {
 
 	// Clear up internal state
 	m.toCall = ""
+	m.busy = false
 	return nil
 }
 
@@ -212,7 +227,7 @@ func (m *Modem) handleCmd(c string) bool {
 			break
 		}
 		if strings.HasPrefix(c, "REGISTERED") {
-			// nothing to do
+			log.Printf("Full speed available, Vara registered to: %s", c[11:])
 			break
 		}
 		log.Printf("got a vara command I wasn't expecting: %v", c)
@@ -239,6 +254,16 @@ func (m *Modem) handleDisconnect() {
 	m.dataConn = disconnectTCP("data", m.dataConn)
 	// Close command port TCP connection
 	m.cmdConn = disconnectTCP("cmd", m.cmdConn)
+}
+
+func (m *Modem) Ping() bool {
+	// TODO
+	return true
+}
+
+func (m *Modem) Version() (string, error) {
+	// TODO
+	return "v1", nil
 }
 
 // If env var VARA_DEBUG exists, log more stuff

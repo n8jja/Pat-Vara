@@ -30,6 +30,21 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 		}
 	}
 
+	// Select public
+	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
+		return nil, err
+	}
+
+	// CWID enable
+	if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
+		return nil, err
+	}
+
+	// Set compression
+	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
+		return nil, err
+	}
+
 	// Set MYCALL
 	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
 		return nil, err
@@ -37,6 +52,16 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 
 	// Set bandwidth from the URL
 	if err := m.setBandwidth(url); err != nil {
+		return nil, err
+	}
+
+	// Listen on
+	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
+		return nil, err
+	}
+
+	// Winlink or radio only? TODO
+	if err := m.writeCmd(fmt.Sprintf("WINLINK SESSION")); err != nil {
 		return nil, err
 	}
 

@@ -11,7 +11,7 @@ import (
 // Implementations for various wl2k-go/transport interfaces.
 
 func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
-	if url.Scheme != network {
+	if url.Scheme != m.scheme {
 		return nil, transport.ErrUnsupportedScheme
 	}
 
@@ -60,9 +60,18 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 		return nil, err
 	}
 
-	// Winlink or radio only? TODO
-	if err := m.writeCmd(fmt.Sprintf("WINLINK SESSION")); err != nil {
-		return nil, err
+	if m.scheme == "varahf" {
+		// VaraHF only - Winlink or P2P?
+		p2p := url.Params.Get("p2p") == "true"
+		if p2p {
+			if err := m.writeCmd(fmt.Sprintf("P2P SESSION")); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := m.writeCmd(fmt.Sprintf("WINLINK SESSION")); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Start connecting

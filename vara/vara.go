@@ -36,6 +36,7 @@ var defaultConfig = ModemConfig{
 }
 
 type Modem struct {
+	scheme        string
 	myCall        string
 	config        ModemConfig
 	cmdConn       *net.TCPConn
@@ -66,12 +67,13 @@ func Bandwidths() []string {
 }
 
 // NewModem initializes configuration for a new VARA modem client stub.
-func NewModem(myCall string, config ModemConfig) (*Modem, error) {
+func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) {
 	// Back-fill empty config values with defaults
 	if err := mergo.Merge(&config, defaultConfig); err != nil {
 		return nil, err
 	}
 	return &Modem{
+		scheme:        scheme,
 		myCall:        myCall,
 		config:        config,
 		busy:          false,

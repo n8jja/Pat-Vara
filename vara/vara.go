@@ -221,7 +221,8 @@ func (m *Modem) handleCmd(c string) bool {
 		return false
 	default:
 		if strings.HasPrefix(c, "CONNECTED") {
-			m.handleConnect()
+			parts := strings.SplitN(c[10:], " ", 2)
+			m.handleConnect(parts[0])
 			break
 		}
 		if strings.HasPrefix(c, "BUFFER") {
@@ -243,8 +244,9 @@ func (m *Modem) sendPTT(on bool) {
 	}
 }
 
-func (m *Modem) handleConnect() {
+func (m *Modem) handleConnect(otherSide string) {
 	m.lastState = connected
+	m.toCall = otherSide
 	m.connectChange <- connected
 }
 

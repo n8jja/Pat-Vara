@@ -15,48 +15,18 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 		return nil, transport.ErrUnsupportedScheme
 	}
 
-	// Open the VARA command TCP port if it isn't
-	if m.cmdConn == nil {
-		if err := m.start(); err != nil {
-			return nil, err
-		}
+	conn, err := m.tncConnect()
+	if err != nil {
+		return conn, err
 	}
 
-	// Open the VARA data TCP port if it isn't
-	if m.dataConn == nil {
-		var err error
-		if m.dataConn, err = m.connectTCP("data", m.config.DataPort); err != nil {
-			return nil, err
-		}
-	}
-
-	// Select public
-	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
-		return nil, err
-	}
-
-	// CWID enable
-	if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
-		return nil, err
-	}
-
-	// Set compression
-	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
-		return nil, err
-	}
-
-	// Set MYCALL
-	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
+	err = m.tncSetup()
+	if err != nil {
 		return nil, err
 	}
 
 	// Set bandwidth from the URL
 	if err := m.setBandwidth(url); err != nil {
-		return nil, err
-	}
-
-	// Listen on
-	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
 		return nil, err
 	}
 
@@ -88,6 +58,47 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 
 	// Hand the VARA data TCP port to the client code
 	return &varaDataConn{*m.dataConn, *m}, nil
+}
+
+func (m *Modem) tncSetup() error {
+	// Select public
+	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
+		return err
+	}
+
+	// CWID enable
+	if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
+		return err
+	}
+
+	// Set compression
+	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
+		return err
+	}
+
+	// Set MYCALL
+	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Modem) tncConnect() (net.Conn, error) {
+	// Open the VARA command TCP port if it isn't
+	if m.cmdConn == nil {
+		if err := m.start(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Open the VARA data TCP port if it isn't
+	if m.dataConn == nil {
+		var err error
+		if m.dataConn, err = m.connectTCP("data", m.config.DataPort); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
 }
 
 func (m *Modem) setBandwidth(url *transport.URL) error {

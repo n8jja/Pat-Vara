@@ -1,14 +1,40 @@
 package vara
 
-import "net"
+import (
+	"errors"
+	"fmt"
+	"net"
+)
 
 // Implementation for the net.Listener interface.
 // (Close method is implemented in connection.go.)
 
 // Accept waits for and returns the next connection to the listener.
 func (m *Modem) Accept() (net.Conn, error) {
-	// TODO: VARA command is "LISTEN ON"
-	return nil, errNotImplemented
+	conn, err := m.tncConnect()
+	if err != nil {
+		return conn, err
+	}
+
+	err = m.tncSetup()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.writeCmd("LISTEN ON"); err != nil {
+		return nil, err
+	}
+
+	// Block until connected
+	if <-m.connectChange != connected {
+		m.dataConn = nil
+		return nil, errors.New("connection failed")
+	}
+
+	debugPrint(fmt.Sprintf("connected to %s", m.toCall))
+
+	// Hand the VARA data TCP port to the client code
+	return &varaDataConn{*m.dataConn, *m}, nil
 }
 
 // Addr returns the listener's network address.

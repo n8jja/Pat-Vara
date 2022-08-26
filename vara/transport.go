@@ -36,8 +36,10 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 	}
 
 	// CWID enable
-	if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
-		return nil, err
+	if m.scheme == "varahf" {
+		if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
+			return nil, err
+		}
 	}
 
 	// Set compression

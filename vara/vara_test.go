@@ -8,7 +8,7 @@ import (
 )
 
 func TestInterfaces(t *testing.T) {
-	var modem, _ = NewModem("N0CALL", ModemConfig{})
+	var modem, _ = NewModem("varafm", "N0CALL", ModemConfig{})
 
 	// Ensure modem implements the necessary interfaces
 	// (https://github.com/la5nta/pat/wiki/Adding-transports)

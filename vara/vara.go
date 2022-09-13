@@ -229,7 +229,10 @@ func (m *Modem) handleCmd(c string) bool {
 			break
 		}
 		if strings.HasPrefix(c, "REGISTERED") {
-			log.Printf("Full speed available, Vara registered to: %s", c[11:])
+			parts := strings.Split(c, " ")
+			if len(parts) > 1 {
+				log.Printf("VARA full speed available, registered to %s", parts[1])
+			}
 			break
 		}
 		log.Printf("got a vara command I wasn't expecting: %v", c)

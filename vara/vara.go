@@ -7,7 +7,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/imdario/mergo"
@@ -46,6 +48,8 @@ type Modem struct {
 	connectChange chan connectedState
 	lastState     connectedState
 	rig           transport.PTTController
+
+	bufferCount int64 // Use atomic
 }
 
 type connectedState int
@@ -137,6 +141,10 @@ func (m *Modem) Close() error {
 	return nil
 }
 
+func (m *Modem) incrBufferCount(n int) { atomic.AddInt64(&m.bufferCount, int64(n)) }
+func (m *Modem) getBufferCount() int   { return int(atomic.LoadInt64(&m.bufferCount)) }
+func (m *Modem) setBufferCount(n int)  { atomic.StoreInt64(&m.bufferCount, int64(n)) }
+
 func (m *Modem) connectTCP(name string, port int) (*net.TCPConn, error) {
 	debugPrint(fmt.Sprintf("Connecting %s", name))
 	cmdAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", m.config.Host, port))
@@ -225,7 +233,17 @@ func (m *Modem) handleCmd(c string) bool {
 			break
 		}
 		if strings.HasPrefix(c, "BUFFER") {
-			// nothing to do
+			parts := strings.Split(c, " ")
+			if len(parts) != 2 {
+				// nothing to do
+				break
+			}
+			n, err := strconv.Atoi(parts[1])
+			if err != nil {
+				// not a valid int. nothing to do.
+				break
+			}
+			m.setBufferCount(n)
 			break
 		}
 		if strings.HasPrefix(c, "REGISTERED") {

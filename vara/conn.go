@@ -34,3 +34,13 @@ func (v *varaDataConn) LocalAddr() net.Addr {
 func (v *varaDataConn) RemoteAddr() net.Addr {
 	return Addr{v.modem.toCall}
 }
+
+func (v *varaDataConn) Write(b []byte) (int, error) {
+	n, err := v.TCPConn.Write(b)
+	v.modem.incrBufferCount(n)
+	return n, err
+}
+
+// TxBufferLen implements the transport.TxBuffer interface.
+// It returns the current number of bytes in the TX buffer queue or in transit to the modem.
+func (v *varaDataConn) TxBufferLen() int { return v.modem.getBufferCount() }

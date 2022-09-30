@@ -1,7 +1,9 @@
 package vara
 
 import (
+	"fmt"
 	"net"
+	"time"
 )
 
 // Wrapper for the data port connection we hand to clients. Implements net.Conn.
@@ -36,8 +38,19 @@ func (v *varaDataConn) RemoteAddr() net.Addr {
 }
 
 func (v *varaDataConn) Write(b []byte) (int, error) {
+	queued := v.modem.notifyQueued()
 	n, err := v.TCPConn.Write(b)
-	v.modem.incrBufferCount(n)
+	// Block until the modem confirms that data has been added to the
+	// transmit buffer queue. This is needed to ensure TxBufferLen are
+	// able to report the correct number of bytes, as well as making the
+	// Write call behave more or less synchronous with regards to the
+	// transmitted data (rate).
+	select {
+	case <-queued:
+		return n, err
+	case <-time.After(time.Minute):
+		return n, fmt.Errorf("write queue timeout")
+	}
 	return n, err
 }
 

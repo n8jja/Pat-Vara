@@ -49,7 +49,8 @@ type Modem struct {
 	lastState     connectedState
 	rig           transport.PTTController
 
-	bufferCount int64 // Use atomic
+	bufferCount   int64    // Use atomic
+	bufferUpdates chan int // Signals an incoming BUFFER
 }
 
 type connectedState int
@@ -83,6 +84,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		busy:          false,
 		connectChange: make(chan connectedState, 1),
 		lastState:     disconnected,
+		bufferUpdates: make(chan int),
 	}, nil
 }
 
@@ -141,9 +143,25 @@ func (m *Modem) Close() error {
 	return nil
 }
 
-func (m *Modem) incrBufferCount(n int) { atomic.AddInt64(&m.bufferCount, int64(n)) }
-func (m *Modem) getBufferCount() int   { return int(atomic.LoadInt64(&m.bufferCount)) }
-func (m *Modem) setBufferCount(n int)  { atomic.StoreInt64(&m.bufferCount, int64(n)) }
+func (m *Modem) getBufferCount() int  { return int(atomic.LoadInt64(&m.bufferCount)) }
+func (m *Modem) setBufferCount(n int) { atomic.StoreInt64(&m.bufferCount, int64(n)) }
+
+// notifyQueued subscribes to BUFFER updates sent from the modem.
+//
+// The returned channel is buffered, allowing the receiver to defer reading
+// from the channel without missing out on the next BUFFER value sent from the
+// modem.
+func (m *Modem) notifyQueued() <-chan int {
+	queued := make(chan int, 1)
+	go func() {
+		defer close(queued)
+		for n := range m.bufferUpdates {
+			queued <- n
+			return
+		}
+	}()
+	return queued
+}
 
 func (m *Modem) connectTCP(name string, port int) (*net.TCPConn, error) {
 	debugPrint(fmt.Sprintf("Connecting %s", name))
@@ -244,6 +262,10 @@ func (m *Modem) handleCmd(c string) bool {
 				break
 			}
 			m.setBufferCount(n)
+			select {
+			case m.bufferUpdates <- n:
+			default:
+			}
 			break
 		}
 		if strings.HasPrefix(c, "REGISTERED") {

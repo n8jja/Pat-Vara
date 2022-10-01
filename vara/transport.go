@@ -94,12 +94,14 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	// Block until connected or context cancellation
 	select {
 	case <-ctx.Done():
-		m.dataConn = nil
 		m.writeCmd(fmt.Sprintf("DISCONNECT"))
 		<-m.connectChange
+		m.dataConn.Close()
+		m.dataConn = nil
 		return nil, ctx.Err()
 	case newState := <-m.connectChange:
 		if newState != connected {
+			m.dataConn.Close()
 			m.dataConn = nil
 			return nil, errors.New("connection failed")
 		}

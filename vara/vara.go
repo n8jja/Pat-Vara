@@ -102,6 +102,22 @@ func (m *Modem) start() error {
 
 // Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
 func (m *Modem) Close() error {
+	if m.cmdConn == nil {
+		// Modem already closed.
+		return nil
+	}
+	defer func() {
+		if m.dataConn != nil {
+			m.dataConn.Close()
+			m.dataConn = nil
+		}
+		if m.cmdConn != nil {
+			m.cmdConn.Close()
+			m.cmdConn = nil
+		}
+		close(m.connectChange)
+	}()
+
 	// Block until VARA modem acks disconnect
 	if m.lastState == connected {
 		// Send DISCONNECT command
@@ -112,7 +128,11 @@ func (m *Modem) Close() error {
 		}
 
 		select {
-		case res := <-m.connectChange:
+		case res, ok := <-m.connectChange:
+			if !ok {
+				// Modem closed.
+				return nil
+			}
 			if res != disconnected {
 				log.Println("Disconnect failed, aborting!")
 				if err := m.writeCmd("ABORT"); err != nil {
@@ -120,6 +140,10 @@ func (m *Modem) Close() error {
 				}
 			}
 		case <-time.After(time.Second * 60):
+			if m.cmdConn == nil {
+				// Modem already closed.
+				return nil
+			}
 			if err := m.writeCmd("ABORT"); err != nil {
 				return err
 			}

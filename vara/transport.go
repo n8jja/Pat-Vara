@@ -1,6 +1,7 @@
 package vara
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,14 @@ import (
 // Implementations for various wl2k-go/transport interfaces.
 
 func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
+	return m.DialURLContext(context.Background(), url)
+}
+
+// DialURLContext dials varafm/varahf URLs with cancellation support.
+//
+// If the context is cancelled while dialing, the connection may be closed gracefully before returning an error.
+// Use Abort() for immediate cancellation of a dial operation.
+func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Conn, error) {
 	if url.Scheme != m.scheme {
 		return nil, transport.ErrUnsupportedScheme
 	}
@@ -82,15 +91,27 @@ func (m *Modem) DialURL(url *transport.URL) (net.Conn, error) {
 		return nil, err
 	}
 
-	// Block until connected
-	if <-m.connectChange != connected {
+	// Block until connected or context cancellation
+	select {
+	case <-ctx.Done():
+		m.writeCmd(fmt.Sprintf("DISCONNECT"))
+		<-m.connectChange
+		m.dataConn.Close()
 		m.dataConn = nil
-		return nil, errors.New("connection failed")
+		return nil, ctx.Err()
+	case newState := <-m.connectChange:
+		if newState != connected {
+			m.dataConn.Close()
+			m.dataConn = nil
+			return nil, errors.New("connection failed")
+		}
+		// Hand the VARA data TCP port to the client code
+		return &varaDataConn{*m.dataConn, *m}, nil
 	}
-
-	// Hand the VARA data TCP port to the client code
-	return &varaDataConn{*m.dataConn, *m}, nil
 }
+
+// Abort disconnects the link immediately.
+func (m *Modem) Abort() error { return m.writeCmd(fmt.Sprintf("ABORT")) }
 
 func (m *Modem) setBandwidth(url *transport.URL) error {
 	bw := url.Params.Get("bw")

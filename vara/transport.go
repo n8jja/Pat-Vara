@@ -66,8 +66,8 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, err
 	}
 
-	// Listen on
-	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
+	// Listen off
+	if err := m.writeCmd(fmt.Sprintf("LISTEN OFF")); err != nil {
 		return nil, err
 	}
 

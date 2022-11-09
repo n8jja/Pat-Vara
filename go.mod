@@ -1,4 +1,4 @@
-module github.com/n8jja/Pat-Vara/vara
+module github.com/n8jja/Pat-Vara
 
 go 1.16
 

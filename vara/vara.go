@@ -58,6 +58,7 @@ type connectedState int
 const (
 	connected connectedState = iota
 	disconnected
+	connecting
 )
 
 var bandwidths = []string{"500", "2300", "2750"}
@@ -106,6 +107,11 @@ func (m *Modem) start() error {
 	return nil
 }
 
+// Idle returns true if the modem is not in a connecting or connected state.
+func (m *Modem) Idle() bool {
+	return m.lastState == disconnected
+}
+
 // Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
 func (m *Modem) Close() error {
 	if m.cmdConn == nil {
@@ -125,7 +131,7 @@ func (m *Modem) Close() error {
 	}()
 
 	// Block until VARA modem acks disconnect
-	if m.lastState == connected {
+	if m.lastState != disconnected {
 		// Send DISCONNECT command
 		if m.cmdConn != nil {
 			if err := m.writeCmd("DISCONNECT"); err != nil {

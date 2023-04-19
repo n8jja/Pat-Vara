@@ -87,6 +87,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 
 	// Start connecting
 	m.toCall = url.Target
+	m.lastState = connecting
 	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall)); err != nil {
 		return nil, err
 	}

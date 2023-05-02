@@ -11,13 +11,13 @@ type bufferCount struct {
 func newBufferCount() *bufferCount { return &bufferCount{} }
 
 func (m *bufferCount) get() int {
-	m.m.Lock()
-	defer m.m.Unlock()
+	m.m.RLock()
+	defer m.m.RUnlock()
 	return m.n
 }
 
 func (m *bufferCount) set(n int) {
-	m.m.RLock()
+	m.m.Lock()
 	m.n = n
-	m.m.RUnlock()
+	m.m.Unlock()
 }

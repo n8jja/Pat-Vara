@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/imdario/mergo"
@@ -49,8 +48,8 @@ type Modem struct {
 	lastState     connectedState
 	rig           transport.PTTController
 
-	bufferCount   int64    // Use atomic
 	bufferUpdates chan int // Signals an incoming BUFFER
+	bufferCount   *bufferCount
 }
 
 type connectedState int
@@ -86,6 +85,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		connectChange: make(chan connectedState, 1),
 		lastState:     disconnected,
 		bufferUpdates: make(chan int),
+		bufferCount:   newBufferCount(),
 	}, nil
 }
 
@@ -173,8 +173,8 @@ func (m *Modem) Close() error {
 	return nil
 }
 
-func (m *Modem) getBufferCount() int  { return int(atomic.LoadInt64(&m.bufferCount)) }
-func (m *Modem) setBufferCount(n int) { atomic.StoreInt64(&m.bufferCount, int64(n)) }
+func (m *Modem) getBufferCount() int  { return m.bufferCount.get() }
+func (m *Modem) setBufferCount(n int) { m.bufferCount.set(n) }
 
 // notifyQueued subscribes to BUFFER updates sent from the modem.
 //

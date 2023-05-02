@@ -38,7 +38,7 @@ func (v *varaDataConn) RemoteAddr() net.Addr {
 }
 
 func (v *varaDataConn) Write(b []byte) (int, error) {
-	queued := v.modem.notifyQueued()
+	queued := v.modem.bufferCount.notifyQueued()
 	n, err := v.TCPConn.Write(b)
 	// Block until the modem confirms that data has been added to the
 	// transmit buffer queue. This is needed to ensure TxBufferLen are
@@ -56,4 +56,4 @@ func (v *varaDataConn) Write(b []byte) (int, error) {
 
 // TxBufferLen implements the transport.TxBuffer interface.
 // It returns the current number of bytes in the TX buffer queue or in transit to the modem.
-func (v *varaDataConn) TxBufferLen() int { return v.modem.getBufferCount() }
+func (v *varaDataConn) TxBufferLen() int { return v.modem.bufferCount.get() }

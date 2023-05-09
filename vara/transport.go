@@ -24,41 +24,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, transport.ErrUnsupportedScheme
 	}
 
-	// Open the VARA command TCP port if it isn't
-	if m.cmdConn == nil {
-		if err := m.start(); err != nil {
-			return nil, err
-		}
-	}
-
-	// Open the VARA data TCP port if it isn't
-	if m.dataConn == nil {
-		var err error
-		if m.dataConn, err = m.connectTCP("data", m.config.DataPort); err != nil {
-			return nil, err
-		}
-	}
-
-	// Select public
-	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
-		return nil, err
-	}
-
-	// CWID enable
-	if m.scheme == "varahf" {
-		if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
-			return nil, err
-		}
-	}
-
-	// Set compression
-	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
-		return nil, err
-	}
-
-	// Set MYCALL
-	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
-		return nil, err
+	// TODO: Handle race condition here. Should prevent concurrent dialing.
+	if m.lastState != disconnected {
+		return nil, errors.New("modem busy")
 	}
 
 	// Set bandwidth from the URL
@@ -66,11 +34,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, err
 	}
 
-	// Listen off
-	if err := m.writeCmd(fmt.Sprintf("LISTEN OFF")); err != nil {
-		return nil, err
-	}
-
+	// TODO: Why? What does this do?
 	if m.scheme == "varahf" {
 		// VaraHF only - Winlink or P2P?
 		p2p := url.Params.Get("p2p") == "true"
@@ -97,13 +61,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	case <-ctx.Done():
 		m.writeCmd(fmt.Sprintf("DISCONNECT"))
 		<-m.connectChange
-		m.dataConn.Close()
-		m.dataConn = nil
 		return nil, ctx.Err()
 	case newState := <-m.connectChange:
 		if newState != connected {
-			m.dataConn.Close()
-			m.dataConn = nil
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code

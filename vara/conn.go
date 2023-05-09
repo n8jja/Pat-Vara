@@ -2,6 +2,7 @@ package vara
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -19,8 +20,15 @@ type varaDataConn struct {
 //
 // "Overrides" net.Conn.Close.
 func (v *varaDataConn) Close() error {
-	// If client wants to close the data stream, close down RF and TCP as well
-	return v.modem.Close()
+	// TODO: Handle race. What if this is an old connection? Should we have a stateful conn?
+	if v.modem.lastState != connected {
+		return nil
+	}
+
+	v.modem.writeCmd(fmt.Sprintf("DISCONNECT"))
+	// TODO: Timeout if modem doesn't respond?
+	<-v.modem.connectChange
+	return nil
 }
 
 // LocalAddr returns the local network address.
@@ -37,7 +45,37 @@ func (v *varaDataConn) RemoteAddr() net.Addr {
 	return Addr{v.modem.toCall}
 }
 
+func (v *varaDataConn) Read(b []byte) (n int, err error) {
+	if v.modem.lastState != connected {
+		return 0, io.EOF
+	}
+
+	type res struct {
+		n   int
+		err error
+	}
+	ready := make(chan res, 1)
+	go func() {
+		defer close(ready)
+		v.TCPConn.SetReadDeadline(time.Time{}) // Disable read deadline
+		n, err = v.TCPConn.Read(b)
+		ready <- res{n, err}
+	}()
+	select {
+	case res := <-ready:
+		return res.n, res.err
+	case <-v.modem.connectChange:
+		// Set a read deadline to ensure the Read call is cancelled.
+		v.TCPConn.SetReadDeadline(time.Now())
+		return 0, io.EOF
+	}
+}
+
 func (v *varaDataConn) Write(b []byte) (int, error) {
+	if v.modem.lastState != connected {
+		return 0, io.EOF // TODO: Different error? "use of closed network connection"
+	}
+
 	queued := v.modem.bufferCount.notifyQueued()
 	n, err := v.TCPConn.Write(b)
 	// Block until the modem confirms that data has been added to the
@@ -48,6 +86,8 @@ func (v *varaDataConn) Write(b []byte) (int, error) {
 	select {
 	case <-queued:
 		return n, err
+	case <-v.modem.connectChange:
+		return 0, io.EOF // TODO: Different error? "use of closed network connection"
 	case <-time.After(time.Minute):
 		return n, fmt.Errorf("write queue timeout")
 	}

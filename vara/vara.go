@@ -42,9 +42,9 @@ type Modem struct {
 	config        ModemConfig
 	cmdConn       *net.TCPConn
 	dataConn      *net.TCPConn
-	toCall        string
+	toCall        string // TODO: Move to varaDataConn
 	busy          bool
-	connectChange chan connectedState
+	connectChange chan connectedState // TODO: Should support multiple "subscribers"
 	lastState     connectedState
 	rig           transport.PTTController
 
@@ -59,8 +59,10 @@ const (
 	connecting
 )
 
-var bandwidths = []string{"500", "2300", "2750"}
-var debug bool
+var (
+	bandwidths = []string{"500", "2300", "2750"}
+	debug      bool
+)
 
 func init() {
 	debug = os.Getenv("VARA_DEBUG") != ""
@@ -76,7 +78,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 	if err := mergo.Merge(&config, defaultConfig); err != nil {
 		return nil, err
 	}
-	return &Modem{
+	m := &Modem{
 		scheme:        scheme,
 		myCall:        myCall,
 		config:        config,
@@ -84,7 +86,11 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		connectChange: make(chan connectedState, 1),
 		lastState:     disconnected,
 		bufferCount:   newBufferCount(),
-	}, nil
+	}
+	if err := m.start(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // Start establishes TCP connections with the VARA modem program. This must be called before
@@ -97,8 +103,34 @@ func (m *Modem) start() error {
 		return err
 	}
 
-	// channel is not busy until Vara tells otherwise
-	m.busy = false
+	// Open the data port TCP connection
+	m.dataConn, err = m.connectTCP("data", m.config.DataPort)
+	if err != nil {
+		return err
+	}
+
+	// Select public
+	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
+		return err
+	}
+	// CWID enable
+	if m.scheme == "varahf" {
+		if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
+			return err
+		}
+	}
+	// Set compression
+	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
+		return err
+	}
+	// Set MYCALL
+	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
+		return err
+	}
+	// Listen off
+	if err := m.writeCmd(fmt.Sprintf("LISTEN OFF")); err != nil {
+		return err
+	}
 
 	// Start listening for incoming VARA commands
 	go m.cmdListen()
@@ -202,7 +234,7 @@ func (m *Modem) writeCmd(cmd string) error {
 
 // goroutine listening for incoming commands
 func (m *Modem) cmdListen() {
-	var buf = make([]byte, 1<<16)
+	buf := make([]byte, 1<<16)
 	for {
 		if m.cmdConn == nil {
 			// probably disconnected
@@ -252,7 +284,6 @@ func (m *Modem) handleCmd(c string) bool {
 		// nothing to do
 	case "DISCONNECTED":
 		m.handleDisconnect()
-		return false
 	default:
 		if strings.HasPrefix(c, "CONNECTED") {
 			m.handleConnect()
@@ -298,11 +329,6 @@ func (m *Modem) handleConnect() {
 func (m *Modem) handleDisconnect() {
 	m.lastState = disconnected
 	m.connectChange <- disconnected
-
-	// Close data port TCP connection
-	m.dataConn = disconnectTCP("data", m.dataConn)
-	// Close command port TCP connection
-	m.cmdConn = disconnectTCP("cmd", m.cmdConn)
 }
 
 func (m *Modem) Ping() bool {

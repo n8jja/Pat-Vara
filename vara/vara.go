@@ -44,7 +44,7 @@ type Modem struct {
 	dataConn      *net.TCPConn
 	busy          bool
 	connectChange chan connectedState // TODO: Should support multiple "subscribers"
-	inboundConns  chan *varaDataConn
+	inboundConns  chan *conn
 	lastState     connectedState
 	rig           transport.PTTController
 
@@ -84,7 +84,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		config:        config,
 		busy:          false,
 		connectChange: make(chan connectedState, 1),
-		inboundConns:  make(chan *varaDataConn),
+		inboundConns:  make(chan *conn),
 		lastState:     disconnected,
 		bufferCount:   newBufferCount(),
 	}
@@ -335,7 +335,7 @@ func (m *Modem) handleConnected(cmd string) {
 	case dst == m.myCall:
 		m.lastState = connected
 		select {
-		case m.inboundConns <- &varaDataConn{toCall: src, TCPConn: *m.dataConn, modem: *m}:
+		case m.inboundConns <- &conn{Modem: m, remoteCall: src}:
 		default:
 			debugPrint(fmt.Sprintf("no one is calling Accept() at this time. dropping connection from %s", src))
 			m.writeCmd("DISCONNECT")

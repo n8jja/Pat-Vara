@@ -66,7 +66,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code
-		return &varaDataConn{url.Target, *m.dataConn, *m}, nil
+		return &conn{Modem: m, remoteCall: url.Target}, nil
 	}
 }
 

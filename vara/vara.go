@@ -42,9 +42,9 @@ type Modem struct {
 	config        ModemConfig
 	cmdConn       *net.TCPConn
 	dataConn      *net.TCPConn
-	toCall        string // TODO: Move to varaDataConn
 	busy          bool
 	connectChange chan connectedState // TODO: Should support multiple "subscribers"
+	inboundConns  chan *varaDataConn
 	lastState     connectedState
 	rig           transport.PTTController
 
@@ -84,6 +84,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		config:        config,
 		busy:          false,
 		connectChange: make(chan connectedState, 1),
+		inboundConns:  make(chan *varaDataConn),
 		lastState:     disconnected,
 		bufferCount:   newBufferCount(),
 	}
@@ -198,7 +199,6 @@ func (m *Modem) Close() error {
 	}
 
 	// Clear up internal state
-	m.toCall = ""
 	m.busy = false
 	return nil
 }
@@ -282,11 +282,13 @@ func (m *Modem) handleCmd(c string) bool {
 		// nothing to do
 	case "PENDING":
 		// nothing to do
+	case "CANCELPENDING":
+		// nothing to do
 	case "DISCONNECTED":
 		m.handleDisconnect()
 	default:
-		if strings.HasPrefix(c, "CONNECTED") {
-			m.handleConnect()
+		if strings.HasPrefix(c, "CONNECTED ") {
+			m.handleConnected(c)
 			break
 		}
 		if strings.HasPrefix(c, "BUFFER") {
@@ -321,9 +323,26 @@ func (m *Modem) sendPTT(on bool) {
 	}
 }
 
-func (m *Modem) handleConnect() {
-	m.lastState = connected
-	m.connectChange <- connected
+func (m *Modem) handleConnected(cmd string) {
+	parts := strings.Split(cmd, " ")
+	if len(parts) < 3 {
+		panic(fmt.Sprintf("unexpected CONNECTED command: %q", cmd))
+	}
+	switch src, dst := parts[1], parts[2]; {
+	case src == m.myCall:
+		m.lastState = connected
+		m.connectChange <- connected
+	case dst == m.myCall:
+		m.lastState = connected
+		select {
+		case m.inboundConns <- &varaDataConn{toCall: src, TCPConn: *m.dataConn, modem: *m}:
+		default:
+			debugPrint(fmt.Sprintf("no one is calling Accept() at this time. dropping connection from %s", src))
+			m.writeCmd("DISCONNECT")
+		}
+	default:
+		panic(fmt.Sprintf("unhandled CONNECTED cmd: %q", cmd))
+	}
 }
 
 func (m *Modem) handleDisconnect() {

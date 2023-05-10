@@ -9,6 +9,8 @@ import (
 
 // Wrapper for the data port connection we hand to clients. Implements net.Conn.
 type varaDataConn struct {
+	// the remote station's callsign
+	toCall string
 	// the underlying TCP conn we're wrapping (type embedding)
 	net.TCPConn
 	// the parent modem hosting this connection
@@ -42,7 +44,7 @@ func (v *varaDataConn) LocalAddr() net.Addr {
 //
 // "Overrides" net.Conn.RemoteAddr.
 func (v *varaDataConn) RemoteAddr() net.Addr {
-	return Addr{v.modem.toCall}
+	return Addr{v.toCall}
 }
 
 func (v *varaDataConn) Read(b []byte) (n int, err error) {

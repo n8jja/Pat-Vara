@@ -50,9 +50,8 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// Start connecting
-	m.toCall = url.Target
 	m.lastState = connecting
-	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall)); err != nil {
+	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
 	}
 
@@ -67,7 +66,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code
-		return &varaDataConn{*m.dataConn, *m}, nil
+		return &varaDataConn{url.Target, *m.dataConn, *m}, nil
 	}
 }
 

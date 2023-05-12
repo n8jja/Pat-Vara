@@ -43,7 +43,7 @@ type Modem struct {
 	cmdConn       *net.TCPConn
 	dataConn      *net.TCPConn
 	busy          bool
-	connectChange chan connectedState // TODO: Should support multiple "subscribers"
+	connectChange pubSub
 	inboundConns  chan *conn
 	lastState     connectedState
 	rig           transport.PTTController
@@ -83,7 +83,7 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 		myCall:        myCall,
 		config:        config,
 		busy:          false,
-		connectChange: make(chan connectedState, 1),
+		connectChange: newPubSub(),
 		inboundConns:  make(chan *conn),
 		lastState:     disconnected,
 		bufferCount:   newBufferCount(),
@@ -135,6 +135,13 @@ func (m *Modem) start() error {
 
 	// Start listening for incoming VARA commands
 	go m.cmdListen()
+	go func() {
+		connectChange, cancel := m.connectChange.Subscribe()
+		defer cancel()
+		for newState := range connectChange {
+			m.lastState = newState
+		}
+	}()
 	return nil
 }
 
@@ -158,10 +165,12 @@ func (m *Modem) Close() error {
 			m.cmdConn.Close()
 			m.cmdConn = nil
 		}
-		close(m.connectChange)
+		m.connectChange.Close()
 	}()
 
 	// Block until VARA modem acks disconnect
+	connectChange, cancel := m.connectChange.Subscribe()
+	defer cancel()
 	if m.lastState != disconnected {
 		// Send DISCONNECT command
 		if m.cmdConn != nil {
@@ -171,7 +180,7 @@ func (m *Modem) Close() error {
 		}
 
 		select {
-		case res, ok := <-m.connectChange:
+		case res, ok := <-connectChange:
 			if !ok {
 				// Modem closed.
 				return nil
@@ -285,9 +294,10 @@ func (m *Modem) handleCmd(c string) bool {
 	case "CANCELPENDING":
 		// nothing to do
 	case "DISCONNECTED":
-		m.handleDisconnect()
+		m.connectChange.Publish(disconnected)
 	default:
 		if strings.HasPrefix(c, "CONNECTED ") {
+			m.connectChange.Publish(connected)
 			m.handleConnected(c)
 			break
 		}
@@ -330,10 +340,9 @@ func (m *Modem) handleConnected(cmd string) {
 	}
 	switch src, dst := parts[1], parts[2]; {
 	case src == m.myCall:
-		m.lastState = connected
-		m.connectChange <- connected
+		m.connectChange.Publish(connected)
 	case dst == m.myCall:
-		m.lastState = connected
+		m.connectChange.Publish(connected)
 		select {
 		case m.inboundConns <- &conn{Modem: m, remoteCall: src}:
 		default:
@@ -343,11 +352,6 @@ func (m *Modem) handleConnected(cmd string) {
 	default:
 		panic(fmt.Sprintf("unhandled CONNECTED cmd: %q", cmd))
 	}
-}
-
-func (m *Modem) handleDisconnect() {
-	m.lastState = disconnected
-	m.connectChange <- disconnected
 }
 
 func (m *Modem) Ping() bool {

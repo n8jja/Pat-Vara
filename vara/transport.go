@@ -50,7 +50,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// Start connecting
-	m.lastState = connecting
+	m.connectChange.Publish(connecting)
+	connectChange, cancel := m.connectChange.Subscribe()
+	defer cancel()
 	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
 	}
@@ -59,13 +61,16 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	select {
 	case <-ctx.Done():
 		m.writeCmd(fmt.Sprintf("DISCONNECT"))
-		<-m.connectChange
+		<-connectChange
 		return nil, ctx.Err()
-	case newState := <-m.connectChange:
+	case newState := <-connectChange:
 		if newState != connected {
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code
+		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
+		//         Should the newState include remote address?
+		//         Or maybe the complete command string instead of this enum?
 		return &conn{Modem: m, remoteCall: url.Target}, nil
 	}
 }

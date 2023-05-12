@@ -35,16 +35,20 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (v *conn) Close() error {
 	v.closeOnce.Do(func() {
+		connectChange, cancel := v.connectChange.Subscribe()
+		defer cancel()
 		if v.lastState != connected {
 			return
 		}
 		v.writeCmd(fmt.Sprintf("DISCONNECT"))
-		<-v.connectChange
+		<-connectChange
 	})
 	return nil
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {
+	connectChange, cancel := v.connectChange.Subscribe()
+	defer cancel()
 	if v.lastState != connected {
 		return 0, io.EOF
 	}
@@ -63,7 +67,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	select {
 	case res := <-ready:
 		return res.n, res.err
-	case <-v.connectChange:
+	case <-connectChange:
 		// Set a read deadline to ensure the Read call is cancelled.
 		v.dataConn.SetReadDeadline(time.Now())
 		return 0, io.EOF
@@ -71,6 +75,8 @@ func (v *conn) Read(b []byte) (n int, err error) {
 }
 
 func (v *conn) Write(b []byte) (int, error) {
+	connectChange, cancel := v.connectChange.Subscribe()
+	defer cancel()
 	if v.lastState != connected {
 		return 0, io.EOF // TODO: Different error? "use of closed network connection"
 	}
@@ -85,7 +91,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	select {
 	case <-queued:
 		return n, err
-	case <-v.connectChange:
+	case <-connectChange:
 		return 0, io.EOF // TODO: Different error? "use of closed network connection"
 	case <-time.After(time.Minute):
 		return n, fmt.Errorf("write queue timeout")

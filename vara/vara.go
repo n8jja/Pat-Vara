@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imdario/mergo"
@@ -49,6 +50,7 @@ type Modem struct {
 	rig           transport.PTTController
 
 	bufferCount *bufferCount
+	closeOnce   sync.Once
 }
 
 type connectedState int
@@ -135,13 +137,6 @@ func (m *Modem) start() error {
 
 	// Start listening for incoming VARA commands
 	go m.cmdListen()
-	go func() {
-		connectChange, cancel := m.connectChange.Subscribe()
-		defer cancel()
-		for newState := range connectChange {
-			m.lastState = newState
-		}
-	}()
 	return nil
 }
 
@@ -152,63 +147,37 @@ func (m *Modem) Idle() bool {
 
 // Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
 func (m *Modem) Close() error {
-	if m.cmdConn == nil {
-		// Modem already closed.
-		return nil
-	}
-	defer func() {
-		if m.dataConn != nil {
+	// TODO: How to prevent future Dial/Listen?
+	m.closeOnce.Do(func() {
+		defer func() {
+			m.connectChange.Close()
 			m.dataConn.Close()
-			m.dataConn = nil
-		}
-		if m.cmdConn != nil {
 			m.cmdConn.Close()
-			m.cmdConn = nil
-		}
-		m.connectChange.Close()
-	}()
+		}()
 
-	// Block until VARA modem acks disconnect
-	connectChange, cancel := m.connectChange.Subscribe()
-	defer cancel()
-	if m.lastState != disconnected {
-		// Send DISCONNECT command
-		if m.cmdConn != nil {
+		// Disconnect if connected
+		connectChange, cancel := m.connectChange.Subscribe()
+		defer cancel()
+		if m.lastState != disconnected {
+			// Send DISCONNECT command
 			if err := m.writeCmd("DISCONNECT"); err != nil {
-				return err
+				// We have already lost connection with the modem, so just return.
+				return
 			}
-		}
-
-		select {
-		case res, ok := <-connectChange:
-			if !ok {
-				// Modem closed.
-				return nil
-			}
-			if res != disconnected {
-				log.Println("Disconnect failed, aborting!")
-				if err := m.writeCmd("ABORT"); err != nil {
-					return err
+			select {
+			case res := <-connectChange:
+				if res != disconnected {
+					log.Println("Disconnect failed, aborting!")
+					m.writeCmd("ABORT")
 				}
-			}
-		case <-time.After(time.Second * 60):
-			if m.cmdConn == nil {
-				// Modem already closed.
-				return nil
-			}
-			if err := m.writeCmd("ABORT"); err != nil {
-				return err
+			case <-time.After(time.Second * 60):
+				m.writeCmd("ABORT")
 			}
 		}
-	}
 
-	// Make sure to stop TX (should have already happened, but this is a backup)
-	if m.rig != nil {
-		_ = m.rig.SetPTT(false)
-	}
-
-	// Clear up internal state
-	m.busy = false
+		// Make sure to stop TX (should have already happened, but this is a backup)
+		m.sendPTT(false)
+	})
 	return nil
 }
 
@@ -294,9 +263,11 @@ func (m *Modem) handleCmd(c string) bool {
 	case "CANCELPENDING":
 		// nothing to do
 	case "DISCONNECTED":
+		m.lastState = disconnected
 		m.connectChange.Publish(disconnected)
 	default:
 		if strings.HasPrefix(c, "CONNECTED ") {
+			m.lastState = connected
 			m.connectChange.Publish(connected)
 			m.handleConnected(c)
 			break
@@ -355,7 +326,7 @@ func (m *Modem) handleConnected(cmd string) {
 }
 
 func (m *Modem) Ping() bool {
-	// TODO
+	// TODO: Use KEEPALIVE command?
 	return true
 }
 

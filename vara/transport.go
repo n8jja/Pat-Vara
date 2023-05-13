@@ -50,6 +50,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// Start connecting
+	m.lastState = connecting
 	m.connectChange.Publish(connecting)
 	connectChange, cancel := m.connectChange.Subscribe()
 	defer cancel()
@@ -60,7 +61,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	// Block until connected or context cancellation
 	select {
 	case <-ctx.Done():
-		m.writeCmd(fmt.Sprintf("DISCONNECT"))
+		m.writeCmd("DISCONNECT")
 		<-connectChange
 		return nil, ctx.Err()
 	case newState := <-connectChange:

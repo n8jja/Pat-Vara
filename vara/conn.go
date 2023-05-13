@@ -37,10 +37,10 @@ func (v *conn) Close() error {
 	v.closeOnce.Do(func() {
 		connectChange, cancel := v.connectChange.Subscribe()
 		defer cancel()
-		if v.lastState != connected {
+		if v.lastState == disconnected {
 			return
 		}
-		v.writeCmd(fmt.Sprintf("DISCONNECT"))
+		v.writeCmd("DISCONNECT")
 		<-connectChange
 	})
 	return nil
@@ -78,11 +78,14 @@ func (v *conn) Write(b []byte) (int, error) {
 	connectChange, cancel := v.connectChange.Subscribe()
 	defer cancel()
 	if v.lastState != connected {
-		return 0, io.EOF // TODO: Different error? "use of closed network connection"
+		return 0, io.EOF
 	}
 
 	queued := v.bufferCount.notifyQueued()
 	n, err := v.dataConn.Write(b)
+	if err != nil {
+		return n, err
+	}
 	// Block until the modem confirms that data has been added to the
 	// transmit buffer queue. This is needed to ensure TxBufferLen are
 	// able to report the correct number of bytes, as well as making the
@@ -90,13 +93,12 @@ func (v *conn) Write(b []byte) (int, error) {
 	// transmitted data (rate).
 	select {
 	case <-queued:
-		return n, err
+		return n, nil
 	case <-connectChange:
-		return 0, io.EOF // TODO: Different error? "use of closed network connection"
+		return 0, io.EOF
 	case <-time.After(time.Minute):
 		return n, fmt.Errorf("write queue timeout")
 	}
-	return n, err
 }
 
 // TxBufferLen implements the transport.TxBuffer interface.

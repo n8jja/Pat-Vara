@@ -1,6 +1,8 @@
 package vara
 
-import "sync"
+import (
+	"sync"
+)
 
 type pubSub struct {
 	in        chan connectedState

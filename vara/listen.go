@@ -18,6 +18,9 @@ type listener struct {
 }
 
 func (m *Modem) Listen() (net.Listener, error) {
+	if m.closed {
+		return nil, errors.New("modem closed")
+	}
 	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
 		return nil, err
 	}

@@ -23,6 +23,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	if url.Scheme != m.scheme {
 		return nil, transport.ErrUnsupportedScheme
 	}
+	if m.closed {
+		return nil, errors.New("modem closed")
+	}
 
 	// TODO: Handle race condition here. Should prevent concurrent dialing.
 	if m.lastState != disconnected {

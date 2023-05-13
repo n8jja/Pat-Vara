@@ -35,6 +35,9 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (v *conn) Close() error {
 	v.closeOnce.Do(func() {
+		if v.closed {
+			return
+		}
 		connectChange, cancel := v.connectChange.Subscribe()
 		defer cancel()
 		if v.lastState == disconnected {

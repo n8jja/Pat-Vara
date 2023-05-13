@@ -3,7 +3,6 @@ package vara
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -51,6 +50,7 @@ type Modem struct {
 
 	bufferCount *bufferCount
 	closeOnce   sync.Once
+	closed      bool
 }
 
 type connectedState int
@@ -147,10 +147,11 @@ func (m *Modem) Idle() bool {
 
 // Close closes the RF and then the TCP connections to the VARA modem. Blocks until finished.
 func (m *Modem) Close() error {
-	// TODO: How to prevent future Dial/Listen?
 	m.closeOnce.Do(func() {
+		m.closed = true
 		defer func() {
 			m.connectChange.Close()
+			close(m.inboundConns)
 			m.dataConn.Close()
 			m.cmdConn.Close()
 		}()
@@ -161,7 +162,8 @@ func (m *Modem) Close() error {
 		if m.lastState != disconnected {
 			// Send DISCONNECT command
 			if err := m.writeCmd("DISCONNECT"); err != nil {
-				// We have already lost connection with the modem, so just return.
+				// We have already lost connection with the modem, just publish that the state is disconnected and return.
+				m.connectChange.Publish(disconnected)
 				return
 			}
 			select {
@@ -206,42 +208,45 @@ func disconnectTCP(name string, port *net.TCPConn) *net.TCPConn {
 // wrapper around m.cmdConn.Write
 func (m *Modem) writeCmd(cmd string) error {
 	debugPrint(fmt.Sprintf("writing cmd: %v", cmd))
+	m.cmdConn.SetWriteDeadline(time.Now().Add(time.Second * 5))
 	_, err := m.cmdConn.Write([]byte(cmd + "\r"))
+	if err != nil {
+		m.closed = true
+		debugPrint(fmt.Sprintf("writeCmd err: %v", err))
+	}
 	return err
 }
 
 // goroutine listening for incoming commands
 func (m *Modem) cmdListen() {
+	defer m.Close()
 	buf := make([]byte, 1<<16)
-	for {
-		if m.cmdConn == nil {
-			// probably disconnected
-			return
-		}
+	for !m.closed {
+		// VARA spec says it sends IAMALIVE every 60 seconds, so if we have not heard anything
+		// for 60 seconds, assume we have lost connection and close the modem.
+		m.cmdConn.SetReadDeadline(time.Now().Add(time.Minute))
 		l, err := m.cmdConn.Read(buf)
 		if err != nil {
-			debugPrint(fmt.Sprintf("cmdListen err: %v", err))
-			if errors.Is(err, io.EOF) {
-				// VARA program killed?
-				return
+			if m.lastState != disconnected {
+				log.Println("VARA modem disconnected unexpectedly!")
 			}
-			continue
+			debugPrint(fmt.Sprintf("cmdListen err: %v", err))
+			m.cmdConn.Close() // Make sure any attempts to write to the connection fails hard.
+			return
 		}
 		cmds := strings.Split(string(buf[:l]), "\r")
 		for _, c := range cmds {
 			if c == "" {
 				continue
 			}
-			if !m.handleCmd(c) {
-				return
-			}
+			m.handleCmd(c)
 		}
 	}
 }
 
 // handleCmd handles one command coming from the VARA modem. It returns true if listening should
 // continue or false if listening should stop.
-func (m *Modem) handleCmd(c string) bool {
+func (m *Modem) handleCmd(c string) {
 	debugPrint(fmt.Sprintf("got cmd: %v", c))
 	switch c {
 	case "PTT ON":
@@ -295,7 +300,6 @@ func (m *Modem) handleCmd(c string) bool {
 		}
 		log.Printf("got a vara command I wasn't expecting: %v", c)
 	}
-	return true
 }
 
 func (m *Modem) sendPTT(on bool) {
@@ -326,8 +330,7 @@ func (m *Modem) handleConnected(cmd string) {
 }
 
 func (m *Modem) Ping() bool {
-	// TODO: Use KEEPALIVE command?
-	return true
+	return !m.closed
 }
 
 func (m *Modem) Version() (string, error) {

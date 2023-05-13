@@ -267,6 +267,8 @@ func (m *Modem) handleCmd(c string) {
 		// nothing to do
 	case "CANCELPENDING":
 		// nothing to do
+	case "LINK UNREGISTERED", "LINK REGISTERED":
+		// nothing to do
 	case "DISCONNECTED":
 		m.lastState = disconnected
 		m.connectChange.Publish(disconnected)

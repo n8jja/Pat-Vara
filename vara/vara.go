@@ -223,8 +223,8 @@ func (m *Modem) cmdListen() {
 	buf := make([]byte, 1<<16)
 	for !m.closed {
 		// VARA spec says it sends IAMALIVE every 60 seconds, so if we have not heard anything
-		// for 60 seconds, assume we have lost connection and close the modem.
-		m.cmdConn.SetReadDeadline(time.Now().Add(time.Minute))
+		// for 2 minutes, assume we have lost connection and close the modem.
+		m.cmdConn.SetReadDeadline(time.Now().Add(2 * time.Minute))
 		l, err := m.cmdConn.Read(buf)
 		if err != nil {
 			if m.lastState != disconnected {

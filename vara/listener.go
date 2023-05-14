@@ -3,7 +3,6 @@ package vara
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 )
@@ -30,10 +29,9 @@ func (m *Modem) Listen() (net.Listener, error) {
 
 // Accept waits for and returns the next inbound connection.
 func (ln *listener) Accept() (net.Conn, error) {
-	log.Println("Accept()")
 	select {
 	case conn, ok := <-ln.inboundConns:
-		log.Println("Accept()  got", conn, ok)
+		debugPrint(fmt.Sprintf("Accept() got:", conn, ok))
 		if !ok {
 			return nil, ErrListenerClosed
 		}

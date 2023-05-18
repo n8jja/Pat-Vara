@@ -23,42 +23,13 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	if url.Scheme != m.scheme {
 		return nil, transport.ErrUnsupportedScheme
 	}
-
-	// Open the VARA command TCP port if it isn't
-	if m.cmdConn == nil {
-		if err := m.start(); err != nil {
-			return nil, err
-		}
+	if m.closed {
+		return nil, errors.New("modem closed")
 	}
 
-	// Open the VARA data TCP port if it isn't
-	if m.dataConn == nil {
-		var err error
-		if m.dataConn, err = m.connectTCP("data", m.config.DataPort); err != nil {
-			return nil, err
-		}
-	}
-
-	// Select public
-	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
-		return nil, err
-	}
-
-	// CWID enable
-	if m.scheme == "varahf" {
-		if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
-			return nil, err
-		}
-	}
-
-	// Set compression
-	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
-		return nil, err
-	}
-
-	// Set MYCALL
-	if err := m.writeCmd(fmt.Sprintf("MYCALL %s", m.myCall)); err != nil {
-		return nil, err
+	// TODO: Handle race condition here. Should prevent concurrent dialing.
+	if m.lastState != disconnected {
+		return nil, errors.New("modem busy")
 	}
 
 	// Set bandwidth from the URL
@@ -66,11 +37,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, err
 	}
 
-	// Listen off
-	if err := m.writeCmd(fmt.Sprintf("LISTEN OFF")); err != nil {
-		return nil, err
-	}
-
+	// TODO: Why? What does this do?
 	if m.scheme == "varahf" {
 		// VaraHF only - Winlink or P2P?
 		p2p := url.Params.Get("p2p") == "true"
@@ -86,28 +53,29 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// Start connecting
-	m.toCall = url.Target
 	m.lastState = connecting
-	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, m.toCall)); err != nil {
+	m.connectChange.Publish(connecting)
+	connectChange, cancel := m.connectChange.Subscribe()
+	defer cancel()
+	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
 	}
 
 	// Block until connected or context cancellation
 	select {
 	case <-ctx.Done():
-		m.writeCmd(fmt.Sprintf("DISCONNECT"))
-		<-m.connectChange
-		m.dataConn.Close()
-		m.dataConn = nil
+		m.writeCmd("DISCONNECT")
+		<-connectChange
 		return nil, ctx.Err()
-	case newState := <-m.connectChange:
+	case newState := <-connectChange:
 		if newState != connected {
-			m.dataConn.Close()
-			m.dataConn = nil
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code
-		return &varaDataConn{*m.dataConn, *m}, nil
+		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
+		//         Should the newState include remote address?
+		//         Or maybe the complete command string instead of this enum?
+		return &conn{Modem: m, remoteCall: url.Target}, nil
 	}
 }
 

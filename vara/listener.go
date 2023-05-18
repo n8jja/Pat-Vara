@@ -1,22 +1,57 @@
 package vara
 
-import "net"
+import (
+	"errors"
+	"fmt"
+	"net"
+	"sync"
+)
 
-// Implementation for the net.Listener interface.
-// (Close method is implemented in connection.go.)
+var ErrListenerClosed = errors.New("listener closed")
+
+type listener struct {
+	*Modem
+
+	closeOnce sync.Once
+	done      chan struct{}
+}
 
 // Accept waits for and returns the next connection to the listener.
-func (m *Modem) Accept() (net.Conn, error) {
-	// TODO: VARA command is "LISTEN ON"
-	return nil, errNotImplemented
+func (m *Modem) Listen() (net.Listener, error) {
+	if m.closed {
+		return nil, errors.New("modem closed")
+	}
+	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
+		return nil, err
+	}
+	return &listener{Modem: m, done: make(chan struct{})}, nil
+}
+
+// Accept waits for and returns the next inbound connection.
+func (ln *listener) Accept() (net.Conn, error) {
+	select {
+	case conn, ok := <-ln.inboundConns:
+		debugPrint(fmt.Sprintf("Accept() got:", conn, ok))
+		if !ok {
+			return nil, ErrListenerClosed
+		}
+		return conn, nil
+	case <-ln.done:
+		return nil, ErrListenerClosed
+	}
 }
 
 // Addr returns the listener's network address.
-func (m *Modem) Addr() net.Addr {
-	return Addr{m.myCall}
+func (ln *listener) Addr() net.Addr { return Addr{ln.myCall} }
+
+// Close closes the listener, any blocked Accept operations will be unblocked.
+func (ln *listener) Close() error {
+	var err error
+	ln.closeOnce.Do(func() {
+		err = ln.writeCmd("LISTEN OFF")
+		if err == nil {
+			close(ln.done)
+		}
+	})
+	return err
 }
-
-type Addr struct{ string }
-
-func (a Addr) Network() string { return network }
-func (a Addr) String() string  { return a.string }

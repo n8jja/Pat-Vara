@@ -321,7 +321,7 @@ func (m *Modem) handleConnected(cmd string) {
 	case dst == m.myCall:
 		m.connectChange.Publish(connected)
 		select {
-		case m.inboundConns <- &conn{Modem: m, remoteCall: src}:
+		case m.inboundConns <- m.newConn(src):
 		default:
 			debugPrint(fmt.Sprintf("no one is calling Accept() at this time. dropping connection from %s", src))
 			m.writeCmd("DISCONNECT")

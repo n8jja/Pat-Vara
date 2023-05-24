@@ -15,6 +15,14 @@ type conn struct {
 	remoteCall string
 }
 
+func (m *Modem) newConn(remoteCall string) *conn {
+	m.dataConn.SetDeadline(time.Time{}) // Reset any previous deadlines
+	return &conn{
+		Modem:      m,
+		remoteCall: remoteCall,
+	}
+}
+
 // SetDeadline sets the read and write deadlines associated with the connection.
 func (v *conn) SetDeadline(t time.Time) error { return v.dataConn.SetDeadline(t) }
 

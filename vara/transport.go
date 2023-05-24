@@ -75,7 +75,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
 		//         Should the newState include remote address?
 		//         Or maybe the complete command string instead of this enum?
-		return &conn{Modem: m, remoteCall: url.Target}, nil
+		return m.newConn(url.Target), nil
 	}
 }
 

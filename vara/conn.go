@@ -92,7 +92,8 @@ func (v *conn) Write(b []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	queued := v.bufferCount.notifyQueued()
+	queued, done := v.bufferCount.notifyQueued()
+	defer done()
 	n, err := v.dataConn.Write(b)
 	if err != nil {
 		return n, err

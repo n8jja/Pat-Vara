@@ -40,6 +40,7 @@ type Modem struct {
 	scheme        string
 	myCall        string
 	config        ModemConfig
+	bandwidth     string
 	cmdConn       *net.TCPConn
 	dataConn      *net.TCPConn
 	busy          bool
@@ -137,6 +138,16 @@ func (m *Modem) start() error {
 
 	// Start listening for incoming VARA commands
 	go m.cmdListen()
+	return nil
+}
+
+// SetBandwidth sets the default bandwidth for outbound and inbound connections.
+func (m *Modem) SetBandwidth(bandwidth string) error {
+	if err := m.setBandwidth(bandwidth); err != nil {
+		return err
+	}
+	// Save this so we can revert on disconnect in case it's changed via connect uri parameter
+	m.bandwidth = bandwidth
 	return nil
 }
 
@@ -272,6 +283,7 @@ func (m *Modem) handleCmd(c string) {
 	case "DISCONNECTED":
 		m.lastState = disconnected
 		m.connectChange.Publish(disconnected)
+		m.setBandwidth(m.bandwidth) // reset bandwidth to default in case it was changed
 	default:
 		if strings.HasPrefix(c, "CONNECTED ") {
 			m.lastState = connected

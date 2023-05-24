@@ -32,8 +32,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, errors.New("modem busy")
 	}
 
-	// Set bandwidth from the URL
-	if err := m.setBandwidth(url); err != nil {
+	// Set temporary bandwidth from the URL
+	// This is reset on disconnect by handleCmd.
+	if err := m.setBandwidth(url.Params.Get("bw")); err != nil {
 		return nil, err
 	}
 
@@ -82,8 +83,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 // Abort disconnects the link immediately.
 func (m *Modem) Abort() error { return m.writeCmd(fmt.Sprintf("ABORT")) }
 
-func (m *Modem) setBandwidth(url *transport.URL) error {
-	bw := url.Params.Get("bw")
+func (m *Modem) setBandwidth(bw string) error {
 	if bw == "" {
 		return nil
 	}

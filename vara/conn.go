@@ -103,12 +103,21 @@ func (v *conn) Write(b []byte) (int, error) {
 	// able to report the correct number of bytes, as well as making the
 	// Write call behave more or less synchronous with regards to the
 	// transmitted data (rate).
+	t := time.NewTimer(10 * time.Minute)
+	defer t.Stop()
 	select {
 	case <-queued:
 		return n, nil
 	case <-connectChange:
 		return 0, io.EOF
-	case <-time.After(time.Minute):
+	case <-t.C:
+		// Modem didn't ACK the write. This is most likely due to a
+		// app<->tnc bug, but might also be due to stalled connection.
+		//
+		// This was previously a one minute timeout, but increased because
+		// it seems newer versions of VARA HF is no longer guaranteed to
+		// send BUFFER when data is added to the tx buffer, only when the
+		// remote end ACKs (despite the spec saying otherwise).
 		return n, fmt.Errorf("write queue timeout")
 	}
 }

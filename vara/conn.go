@@ -11,8 +11,9 @@ import (
 // Wrapper for the data port connection we hand to clients. Implements net.Conn.
 type conn struct {
 	*Modem
-	closeOnce  sync.Once
 	remoteCall string
+	closeOnce  sync.Once
+	closing    bool
 }
 
 func (m *Modem) newConn(remoteCall string) *conn {
@@ -46,6 +47,7 @@ func (v *conn) Close() error {
 		if v.closed {
 			return
 		}
+		v.closing = true
 		connectChange, cancel := v.connectChange.Subscribe()
 		defer cancel()
 		if v.lastState == disconnected {
@@ -88,6 +90,13 @@ func (v *conn) Read(b []byte) (n int, err error) {
 func (v *conn) Write(b []byte) (int, error) {
 	connectChange, cancel := v.connectChange.Subscribe()
 	defer cancel()
+	if v.closing && v.lastState == connected {
+		// VARA keeps accepting data after a DISCONNECT command has been, adding it to the TX buffer queue.
+		// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
+		// keep feeding the buffer after we've sent the DISCONNECT command.
+		// To do this, we block until the disconnect is complete.
+		<-connectChange
+	}
 	if v.lastState != connected {
 		return 0, io.EOF
 	}

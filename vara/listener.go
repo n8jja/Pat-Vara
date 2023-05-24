@@ -31,7 +31,7 @@ func (m *Modem) Listen() (net.Listener, error) {
 func (ln *listener) Accept() (net.Conn, error) {
 	select {
 	case conn, ok := <-ln.inboundConns:
-		debugPrint(fmt.Sprintf("Accept() got:", conn, ok))
+		debugPrint(fmt.Sprint("Accept() got:", conn, ok))
 		if !ok {
 			return nil, ErrListenerClosed
 		}

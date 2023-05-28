@@ -76,8 +76,9 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 //
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (v *conn) Close() error {
+	var err error
 	v.closeOnce.Do(func() {
-		if v.closed {
+		if v.Modem.closed {
 			return
 		}
 		v.closing = true
@@ -88,9 +89,17 @@ func (v *conn) Close() error {
 			return
 		}
 		v.writeCmd("DISCONNECT")
-		<-connectChange
+		select {
+		case <-connectChange:
+			// This is the happy path. Connection was gracefully closed.
+			err = nil
+		case <-time.After(60 * time.Second):
+			debugPrint("disconnect timeout - aborting connection")
+			v.Abort()
+			err = fmt.Errorf("disconnect timeout - connection aborted")
+		}
 	})
-	return nil
+	return err
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {

@@ -81,7 +81,14 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 }
 
 // Abort disconnects the link immediately.
-func (m *Modem) Abort() error { return m.writeCmd(fmt.Sprintf("ABORT")) }
+func (m *Modem) Abort() error {
+	err := m.writeCmd("ABORT")
+	// VARA does not send a DISCONNECTED state change after ABORT if it's
+	// already in the process of disconnecting, so we have to fake it.
+	m.cmds.Publish(disconnected)
+	m.handleDisconnected()
+	return err
+}
 
 func (m *Modem) setBandwidth(bw string) error {
 	if bw == "" {

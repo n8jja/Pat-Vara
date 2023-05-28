@@ -1,6 +1,7 @@
 package vara
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,38 @@ func (m *Modem) newConn(remoteCall string) *conn {
 		Modem:      m,
 		remoteCall: remoteCall,
 	}
+}
+
+// Flush blocks until the modem's TX buffer is empty.
+func (v *conn) Flush() error {
+	debugPrint("Flushing...")
+	defer debugPrint("Flushed")
+	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	defer cancel()
+	if v.closing {
+		return nil
+	}
+
+	timeout := time.NewTimer(time.Minute)
+	defer timeout.Stop()
+
+	count := v.bufferCount.get()
+	for count > 0 {
+		select {
+		case cmd, ok := <-cmds:
+			if !ok || cmd == disconnected {
+				return io.EOF
+			}
+			if !timeout.Stop() {
+				<-timeout.C
+			}
+			timeout.Reset(time.Minute)
+			count = parseBuffer(cmd)
+		case <-timeout.C:
+			return errors.New("flush: buffer timeout")
+		}
+	}
+	return nil
 }
 
 // SetDeadline sets the read and write deadlines associated with the connection.

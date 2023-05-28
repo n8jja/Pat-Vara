@@ -13,8 +13,10 @@ import (
 type conn struct {
 	*Modem
 	remoteCall string
-	closeOnce  sync.Once
-	closing    bool
+
+	lastWrite time.Time
+	closeOnce sync.Once
+	closing   bool
 }
 
 func (m *Modem) newConn(remoteCall string) *conn {
@@ -88,6 +90,15 @@ func (v *conn) Close() error {
 			// Connection is already closed.
 			return
 		}
+
+		// Workaround for race condition between write and close
+		// (since cmd and data are not synchronized being on separate TCP sockets):
+		// VARA promise that DISCONNECT will flush the TX buffer before closing the connection, but we
+		// need to make sure the last data written have reached the modem before calling DISCONNECT.
+		if dur := time.Since(v.lastWrite); dur < 2*time.Second {
+			<-time.After(2*time.Second - dur)
+		}
+
 		v.writeCmd("DISCONNECT")
 		select {
 		case <-connectChange:
@@ -126,10 +137,22 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	}()
 	select {
 	case res := <-ready:
+		// We got data. Return it :)
 		return res.n, res.err
 	case <-connectChange:
+		debugPrint("read: disconnected while reading")
+		// Workaround for race condition between cmd and data conn.
+		// The data was of course sent before the DISCONNECT, but they are received
+		// out of order since they're sent from the modem on independent streams.
+		select {
+		case res := <-ready:
+			debugPrint("read: got data after disconnect")
+			return res.n, res.err
+		case <-time.After(2 * time.Second):
+			debugPrint("read: timeout waiting for data after disconnect")
+			return 0, io.EOF
+		}
 		// Set a read deadline to ensure the Read call is cancelled.
-		debugPrint("read: disconnected while writing")
 		v.dataConn.SetReadDeadline(time.Now())
 		return 0, io.EOF
 	}
@@ -194,6 +217,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	// Modem is ready to receive more data :-)
 	debugPrint("write: sending %d bytes", len(b))
 	v.bufferCount.incr(len(b))
+	v.lastWrite = time.Now()
 	return v.dataConn.Write(b)
 }
 

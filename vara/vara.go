@@ -261,7 +261,7 @@ func (m *Modem) handleCmd(c string) {
 		m.busy = true
 	case "BUSY OFF":
 		m.busy = false
-	case "OK":
+	case "OK", "WRONG":
 		// nothing to do
 	case "IAMALIVE":
 		// nothing to do
@@ -334,6 +334,14 @@ func (m *Modem) Ping() bool {
 }
 
 func (m *Modem) Version() (string, error) {
-	// TODO
-	return "v1", nil
+	resp, cancel := m.cmds.Subscribe("VERSION", "WRONG")
+	defer cancel()
+	if err := m.writeCmd("VERSION"); err != nil {
+		return "", err
+	}
+	str := <-resp
+	if str == "WRONG" {
+		return "", errors.New("VERSION not implemented")
+	}
+	return strings.TrimPrefix(str, "VERSION "), nil
 }

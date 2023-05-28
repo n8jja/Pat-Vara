@@ -48,9 +48,10 @@ func (v *conn) Close() error {
 			return
 		}
 		v.closing = true
-		connectChange, cancel := v.connectChange.Subscribe()
+		connectChange, cancel := v.cmds.Subscribe(disconnected)
 		defer cancel()
-		if v.lastState == disconnected {
+		if v.connectedState == disconnected {
+			// Connection is already closed.
 			return
 		}
 		v.writeCmd("DISCONNECT")
@@ -60,9 +61,9 @@ func (v *conn) Close() error {
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {
-	connectChange, cancel := v.connectChange.Subscribe()
+	connectChange, cancel := v.cmds.Subscribe(disconnected)
 	defer cancel()
-	if v.lastState != connected {
+	if v.connectedState != connected {
 		debugPrint("read: not connected")
 		return 0, io.EOF
 	}
@@ -93,21 +94,23 @@ func (v *conn) Read(b []byte) (n int, err error) {
 }
 
 func (v *conn) Write(b []byte) (int, error) {
-	connectChange, cancel := v.connectChange.Subscribe()
+	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
 	defer cancel()
-	if v.closing && v.lastState == connected {
+	if v.closing && v.connectedState == connected {
 		// VARA keeps accepting data after a DISCONNECT command has been, adding it to the TX buffer queue.
 		// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
 		// keep feeding the buffer after we've sent the DISCONNECT command.
 		// To do this, we block until the disconnect is complete.
-		<-connectChange
+		for cmd := range cmds {
+			if cmd == disconnected {
+				break
+			}
+		}
 	}
-	if v.lastState != connected {
+	if v.connectedState != connected {
 		return 0, io.EOF
 	}
 
-	queued, done := v.bufferCount.notifyQueued()
-	defer done()
 	n, err := v.dataConn.Write(b)
 	if err != nil {
 		return n, err
@@ -120,10 +123,11 @@ func (v *conn) Write(b []byte) (int, error) {
 	t := time.NewTimer(10 * time.Minute)
 	defer t.Stop()
 	select {
-	case <-queued:
+	case cmd := <-cmds:
+		if cmd == disconnected {
+			return 0, io.EOF
+		}
 		return n, nil
-	case <-connectChange:
-		return 0, io.EOF
 	case <-t.C:
 		// Modem didn't ACK the write. This is most likely due to a
 		// app<->tnc bug, but might also be due to stalled connection.

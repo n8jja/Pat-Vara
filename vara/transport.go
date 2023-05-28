@@ -28,7 +28,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// TODO: Handle race condition here. Should prevent concurrent dialing.
-	if m.lastState != disconnected {
+	if m.connectedState != disconnected {
 		return nil, errors.New("modem busy")
 	}
 
@@ -54,9 +54,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 
 	// Start connecting
-	m.lastState = connecting
-	m.connectChange.Publish(connecting)
-	connectChange, cancel := m.connectChange.Subscribe()
+	m.connectedState = connecting
+	m.cmds.Publish(connecting) // TODO: Can we get rid of this?
+	connectChange, cancel := m.cmds.Subscribe(connected, disconnected)
 	defer cancel()
 	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		<-connectChange
 		return nil, ctx.Err()
 	case newState := <-connectChange:
-		if newState != connected {
+		if newState == disconnected {
 			return nil, errors.New("connection failed")
 		}
 		// Hand the VARA data TCP port to the client code

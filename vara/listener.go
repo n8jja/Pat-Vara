@@ -2,7 +2,6 @@ package vara
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"sync"
 )
@@ -21,7 +20,7 @@ func (m *Modem) Listen() (net.Listener, error) {
 	if m.closed {
 		return nil, errors.New("modem closed")
 	}
-	if err := m.writeCmd(fmt.Sprintf("LISTEN ON")); err != nil {
+	if err := m.writeCmd("LISTEN ON"); err != nil {
 		return nil, err
 	}
 	return &listener{Modem: m, done: make(chan struct{})}, nil
@@ -31,7 +30,7 @@ func (m *Modem) Listen() (net.Listener, error) {
 func (ln *listener) Accept() (net.Conn, error) {
 	select {
 	case conn, ok := <-ln.inboundConns:
-		debugPrint(fmt.Sprint("Accept() got:", conn, ok))
+		debugPrint("Accept() got: %v %v", conn, ok)
 		if !ok {
 			return nil, ErrListenerClosed
 		}

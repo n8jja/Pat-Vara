@@ -63,6 +63,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	connectChange, cancel := v.connectChange.Subscribe()
 	defer cancel()
 	if v.lastState != connected {
+		debugPrint("read: not connected")
 		return 0, io.EOF
 	}
 
@@ -75,6 +76,9 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		defer close(ready)
 		v.dataConn.SetReadDeadline(time.Time{}) // Disable read deadline
 		n, err = v.dataConn.Read(b)
+		if err != nil {
+			debugPrint("read error: %v", err)
+		}
 		ready <- res{n, err}
 	}()
 	select {
@@ -82,6 +86,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		return res.n, res.err
 	case <-connectChange:
 		// Set a read deadline to ensure the Read call is cancelled.
+		debugPrint("read: disconnected while writing")
 		v.dataConn.SetReadDeadline(time.Now())
 		return 0, io.EOF
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,14 +61,7 @@ const (
 	connecting
 )
 
-var (
-	bandwidths = []string{"500", "2300", "2750"}
-	debug      bool
-)
-
-func init() {
-	debug = os.Getenv("VARA_DEBUG") != ""
-}
+var bandwidths = []string{"500", "2300", "2750"}
 
 func Bandwidths() []string {
 	return bandwidths
@@ -195,7 +187,7 @@ func (m *Modem) Close() error {
 }
 
 func (m *Modem) connectTCP(name string, port int) (*net.TCPConn, error) {
-	debugPrint(fmt.Sprintf("Connecting %s", name))
+	debugPrint("Connecting %s", name)
 	cmdAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", m.config.Host, port))
 	if err != nil {
 		return nil, fmt.Errorf("couldn't resolve VARA %s address: %w", name, err)
@@ -212,18 +204,18 @@ func disconnectTCP(name string, port *net.TCPConn) *net.TCPConn {
 		return nil
 	}
 	_ = port.Close()
-	debugPrint(fmt.Sprintf("disonnected %s", name))
+	debugPrint("disonnected %s", name)
 	return nil
 }
 
 // wrapper around m.cmdConn.Write
 func (m *Modem) writeCmd(cmd string) error {
-	debugPrint(fmt.Sprintf("writing cmd: %v", cmd))
+	debugPrint3("writing cmd: %v", cmd)
 	m.cmdConn.SetWriteDeadline(time.Now().Add(time.Second * 5))
 	_, err := m.cmdConn.Write([]byte(cmd + "\r"))
 	if err != nil {
 		m.closed = true
-		debugPrint(fmt.Sprintf("writeCmd err: %v", err))
+		debugPrint3("writeCmd err: %v", err)
 	}
 	return err
 }
@@ -241,7 +233,7 @@ func (m *Modem) cmdListen() {
 			if m.lastState != disconnected {
 				log.Println("VARA modem disconnected unexpectedly!")
 			}
-			debugPrint(fmt.Sprintf("cmdListen err: %v", err))
+			debugPrint("cmdListen err: %v", err)
 			m.cmdConn.Close() // Make sure any attempts to write to the connection fails hard.
 			return
 		}
@@ -258,7 +250,7 @@ func (m *Modem) cmdListen() {
 // handleCmd handles one command coming from the VARA modem. It returns true if listening should
 // continue or false if listening should stop.
 func (m *Modem) handleCmd(c string) {
-	debugPrint(fmt.Sprintf("got cmd: %v", c))
+	debugPrint("got cmd: %v", c)
 	switch c {
 	case "PTT ON":
 		// VARA wants to start TX; send that to the PTTController
@@ -335,7 +327,7 @@ func (m *Modem) handleConnected(cmd string) {
 		select {
 		case m.inboundConns <- m.newConn(src):
 		default:
-			debugPrint(fmt.Sprintf("no one is calling Accept() at this time. dropping connection from %s", src))
+			debugPrint("no one is calling Accept() at this time. dropping connection from %s", src)
 			m.writeCmd("DISCONNECT")
 		}
 	default:
@@ -350,11 +342,4 @@ func (m *Modem) Ping() bool {
 func (m *Modem) Version() (string, error) {
 	// TODO
 	return "v1", nil
-}
-
-// If env var VARA_DEBUG exists, log more stuff
-func debugPrint(msg string) {
-	if debug {
-		log.Printf("[VARA] %s", msg)
-	}
 }

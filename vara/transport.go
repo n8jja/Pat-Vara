@@ -44,11 +44,11 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		// VaraHF only - Winlink or P2P?
 		p2p := url.Params.Get("p2p") == "true"
 		if p2p {
-			if err := m.writeCmd(fmt.Sprintf("P2P SESSION")); err != nil {
+			if err := m.writeCmd("P2P SESSION"); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := m.writeCmd(fmt.Sprintf("WINLINK SESSION")); err != nil {
+			if err := m.writeCmd("WINLINK SESSION"); err != nil {
 				return nil, err
 			}
 		}
@@ -126,9 +126,9 @@ func (m *Modem) setBandwidth(bw string) error {
 		return nil
 	}
 	if !contains(bandwidths, bw) {
-		return errors.New(fmt.Sprintf("bandwidth %s not supported", bw))
+		return fmt.Errorf("bandwidth %s not supported", bw)
 	}
-	return m.writeCmd(fmt.Sprintf("BW%s", bw))
+	return m.writeCmd("BW" + bw)
 }
 
 func contains(c []string, s string) bool {

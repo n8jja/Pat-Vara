@@ -156,7 +156,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	defer bufferTimeout.Stop()
 	bufferCount := v.bufferCount.get()
 	for bufferCount >= magicNumber*len(b) && !v.closing {
-		debugPrint(fmt.Sprintf("write: buffer full (%d >= %d)", bufferCount, magicNumber*len(b)))
+		debugPrint("write: buffer full (%d >= %d)", bufferCount, magicNumber*len(b))
 		select {
 		case cmd, ok := <-cmds:
 			if !ok || cmd == disconnected {
@@ -192,7 +192,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	}
 
 	// Modem is ready to receive more data :-)
-	debugPrint(fmt.Sprintf("write: sending %d bytes", len(b)))
+	debugPrint("write: sending %d bytes", len(b))
 	v.bufferCount.incr(len(b))
 	return v.dataConn.Write(b)
 }

@@ -103,17 +103,17 @@ func (m *Modem) start() error {
 	}
 
 	// Select public
-	if err := m.writeCmd(fmt.Sprintf("PUBLIC ON")); err != nil {
+	if err := m.writeCmd("PUBLIC ON"); err != nil {
 		return err
 	}
 	// CWID enable
 	if m.scheme == "varahf" {
-		if err := m.writeCmd(fmt.Sprintf("CWID ON")); err != nil {
+		if err := m.writeCmd("CWID ON"); err != nil {
 			return err
 		}
 	}
 	// Set compression
-	if err := m.writeCmd(fmt.Sprintf("COMPRESSION TEXT")); err != nil {
+	if err := m.writeCmd("COMPRESSION TEXT"); err != nil {
 		return err
 	}
 	// Set MYCALL
@@ -121,7 +121,7 @@ func (m *Modem) start() error {
 		return err
 	}
 	// Listen off
-	if err := m.writeCmd(fmt.Sprintf("LISTEN OFF")); err != nil {
+	if err := m.writeCmd("LISTEN OFF"); err != nil {
 		return err
 	}
 

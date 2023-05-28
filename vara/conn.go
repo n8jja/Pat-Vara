@@ -96,48 +96,63 @@ func (v *conn) Read(b []byte) (n int, err error) {
 func (v *conn) Write(b []byte) (int, error) {
 	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
 	defer cancel()
-	if v.closing && v.connectedState == connected {
-		// VARA keeps accepting data after a DISCONNECT command has been, adding it to the TX buffer queue.
-		// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
-		// keep feeding the buffer after we've sent the DISCONNECT command.
-		// To do this, we block until the disconnect is complete.
-		for cmd := range cmds {
-			if cmd == disconnected {
-				break
-			}
-		}
-	}
 	if v.connectedState != connected {
 		return 0, io.EOF
 	}
 
-	n, err := v.dataConn.Write(b)
-	if err != nil {
-		return n, err
-	}
-	// Block until the modem confirms that data has been added to the
-	// transmit buffer queue. This is needed to ensure TxBufferLen are
-	// able to report the correct number of bytes, as well as making the
-	// Write call behave more or less synchronous with regards to the
-	// transmitted data (rate).
-	t := time.NewTimer(10 * time.Minute)
-	defer t.Stop()
-	select {
-	case cmd := <-cmds:
-		if cmd == disconnected {
-			return 0, io.EOF
+	// Throttle to match the transmitted data rate by blocking if the tx buffer size is getting much bigger
+	// than the payloads being sent.
+	//
+	// Yes, a magic number. We don't know the actual on-air packet length and/or max outstanding frames of
+	// the mode in use. We also don't know how often the modem sends BUFFER updates. If the number is too
+	// small, we end up causing unnecessary IDLE time. Too large and we end up with non-blocking writes and
+	// a very large TX buffer causing Close() to block for a very long time. This magic number seem to work
+	// well enough for both VARA FM and VARA HF.
+	const magicNumber = 7
+
+	bufferTimeout := time.NewTimer(time.Minute)
+	defer bufferTimeout.Stop()
+	bufferCount := v.bufferCount.get()
+	for bufferCount >= magicNumber*len(b) && !v.closing {
+		debugPrint(fmt.Sprintf("write: buffer full (%d >= %d)", bufferCount, magicNumber*len(b)))
+		select {
+		case cmd, ok := <-cmds:
+			if !ok || cmd == disconnected {
+				debugPrint("write: state changed while waiting for buffer space")
+				return 0, io.EOF
+			}
+			bufferCount = parseBuffer(cmd)
+			if !bufferTimeout.Stop() {
+				<-bufferTimeout.C
+			}
+			bufferTimeout.Reset(time.Minute)
+		case <-bufferTimeout.C:
+			// This is most likely due to a app<->tnc bug, but might also be due
+			// to stalled connection.
+			return 0, fmt.Errorf("write: buffer timeout")
 		}
-		return n, nil
-	case <-t.C:
-		// Modem didn't ACK the write. This is most likely due to a
-		// app<->tnc bug, but might also be due to stalled connection.
-		//
-		// This was previously a one minute timeout, but increased because
-		// it seems newer versions of VARA HF is no longer guaranteed to
-		// send BUFFER when data is added to the tx buffer, only when the
-		// remote end ACKs (despite the spec saying otherwise).
-		return n, fmt.Errorf("write queue timeout")
 	}
+
+	// VARA keeps accepting data after a DISCONNECT command has been sent, adding it to the TX buffer queue.
+	// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
+	// keep feeding the buffer after we've sent the DISCONNECT command.
+	// To do this, we block until the disconnect is complete.
+	if v.closing && v.connectedState == connected {
+		debugPrint("write: waiting for disconnect to complete...")
+		for cmd := range cmds {
+			if cmd != disconnected {
+				continue
+			}
+			break
+		}
+		debugPrint("write: disconnect complete")
+		return 0, io.EOF
+	}
+
+	// Modem is ready to receive more data :-)
+	debugPrint(fmt.Sprintf("write: sending %d bytes", len(b)))
+	v.bufferCount.incr(len(b))
+	return v.dataConn.Write(b)
 }
 
 // TxBufferLen implements the transport.TxBuffer interface.

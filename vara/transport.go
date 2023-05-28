@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/la5nta/wl2k-go/transport"
 )
@@ -56,27 +57,41 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	// Start connecting
 	m.connectedState = connecting
 	m.cmds.Publish(connecting) // TODO: Can we get rid of this?
-	connectChange, cancel := m.cmds.Subscribe(connected, disconnected)
+	cmds, cancel := m.cmds.Subscribe(connected, disconnected)
 	defer cancel()
 	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
 	}
 
-	// Block until connected or context cancellation
-	select {
-	case <-ctx.Done():
-		m.writeCmd("DISCONNECT")
-		<-connectChange
-		return nil, ctx.Err()
-	case newState := <-connectChange:
-		if newState == disconnected {
-			return nil, errors.New("connection failed")
+	// Handle context cancellation
+	// VARA does not always accept DISCONNECT while dialing, so we might end up returning
+	// a connection even after DISCONNECT is sent.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			debugPrint("context cancellation - sending disconnect command...")
+			m.writeCmd("DISCONNECT")
+		case <-done:
+			debugPrint("dial completed - context cancellation no longer possible")
 		}
-		// Hand the VARA data TCP port to the client code
+	}()
+
+	// Block until connected state is updated
+	switch cmd := <-cmds; {
+	case strings.HasPrefix(cmd, connected):
 		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
 		//         Should the newState include remote address?
 		//         Or maybe the complete command string instead of this enum?
+		// Hand the VARA data TCP port to the client code
 		return m.newConn(url.Target), nil
+	case ctx.Err() != nil:
+		// DISCONNECTED after context cancellation.
+		return nil, ctx.Err()
+	default:
+		// DISCONNECTED for some other reason. Most likely a timeout.
+		return nil, errors.New("connect timeout")
 	}
 }
 

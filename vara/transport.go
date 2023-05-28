@@ -80,6 +80,22 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}
 }
 
+// Disconnect gracefully closes any active connection, blocking until the link is disconnected.
+//
+// If the modem is not connected, this is a no-op.
+func (m *Modem) Disconnect() error {
+	ack, cancel := m.cmds.Subscribe(disconnected)
+	defer cancel()
+	if m.connectedState == disconnected {
+		return nil
+	}
+	if err := m.writeCmd("DISCONNECT"); err != nil {
+		return err
+	}
+	<-ack
+	return nil
+}
+
 // Abort disconnects the link immediately.
 func (m *Modem) Abort() error {
 	err := m.writeCmd("ABORT")

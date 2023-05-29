@@ -83,6 +83,12 @@ func (v *conn) Close() error {
 		if v.Modem.closed {
 			return
 		}
+		defer func() {
+			// Discard any remaining data
+			v.dataConn.SetReadDeadline(time.Now().Add(time.Second))
+			n, _ := io.Copy(io.Discard, v.dataConn)
+			debugPrint("close: discarded %d bytes of remaining data", n)
+		}()
 		v.closing = true
 		connectChange, cancel := v.cmds.Subscribe(disconnected)
 		defer cancel()

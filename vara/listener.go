@@ -18,7 +18,7 @@ type listener struct {
 // Accept waits for and returns the next connection to the listener.
 func (m *Modem) Listen() (net.Listener, error) {
 	if m.closed {
-		return nil, errors.New("modem closed")
+		return nil, ErrModemClosed
 	}
 	if err := m.writeCmd("LISTEN ON"); err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func (ln *listener) Accept() (net.Conn, error) {
 	case conn, ok := <-ln.inboundConns:
 		debugPrint("Accept() got: %v %v", conn, ok)
 		if !ok {
-			return nil, ErrListenerClosed
+			return nil, ErrModemClosed
 		}
 		return conn, nil
 	case <-ln.done:

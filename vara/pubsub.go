@@ -1,25 +1,39 @@
 package vara
 
 import (
+	"strings"
 	"sync"
 )
 
 type pubSub struct {
-	in        chan connectedState
+	in        chan string
 	req       chan subscriber
 	closeOnce *sync.Once
 }
 
 type subscriber struct {
-	c    chan<- connectedState
-	quit <-chan struct{}
+	c        chan<- string
+	quit     <-chan struct{}
+	prefixes []string
+}
+
+func (s subscriber) wants(v string) bool {
+	if s.prefixes == nil {
+		return true
+	}
+	for _, prefix := range s.prefixes {
+		if strings.HasPrefix(v, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (pb pubSub) Close() { pb.closeOnce.Do(func() { close(pb.in) }) }
 
 func newPubSub() pubSub {
 	pb := pubSub{
-		in:        make(chan connectedState),
+		in:        make(chan string),
 		req:       make(chan subscriber),
 		closeOnce: new(sync.Once),
 	}
@@ -39,6 +53,9 @@ func newPubSub() pubSub {
 				}
 				for i := 0; i < len(subscribers); i++ {
 					s := subscribers[i]
+					if !s.wants(v) {
+						continue
+					}
 					select {
 					case <-s.quit:
 						subscribers = append(subscribers[:i], subscribers[i+1:]...)
@@ -57,14 +74,14 @@ func newPubSub() pubSub {
 	return pb
 }
 
-func (in pubSub) Publish(v connectedState) {
+func (in pubSub) Publish(v string) {
 	in.in <- v
 }
 
-func (in pubSub) Subscribe() (<-chan connectedState, func()) {
-	c := make(chan connectedState, 1)
+func (in pubSub) Subscribe(prefix ...string) (<-chan string, func()) {
+	c := make(chan string, 1)
 	q := make(chan struct{}, 1)
-	in.req <- subscriber{c, q}
+	in.req <- subscriber{c, q, prefix}
 	return c, func() {
 		select {
 		case q <- struct{}{}:

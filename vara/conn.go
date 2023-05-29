@@ -1,6 +1,7 @@
 package vara
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,8 +13,10 @@ import (
 type conn struct {
 	*Modem
 	remoteCall string
-	closeOnce  sync.Once
-	closing    bool
+
+	lastWrite time.Time
+	closeOnce sync.Once
+	closing   bool
 }
 
 func (m *Modem) newConn(remoteCall string) *conn {
@@ -22,6 +25,42 @@ func (m *Modem) newConn(remoteCall string) *conn {
 		Modem:      m,
 		remoteCall: remoteCall,
 	}
+}
+
+// Flush blocks until the modem's TX buffer is empty.
+func (v *conn) Flush() error {
+	debugPrint("Flushing...")
+	defer debugPrint("Flushed")
+	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	defer cancel()
+	if v.closing {
+		return nil
+	}
+
+	timeout := time.NewTimer(time.Minute)
+	defer timeout.Stop()
+
+	count := v.bufferCount.get()
+	for count > 0 {
+		select {
+		case cmd, ok := <-cmds:
+			switch {
+			case !ok:
+				return ErrModemClosed
+			case cmd == disconnected:
+				return io.EOF
+			default:
+				if !timeout.Stop() {
+					<-timeout.C
+				}
+				timeout.Reset(time.Minute)
+				count = parseBuffer(cmd)
+			}
+		case <-timeout.C:
+			return errors.New("flush: buffer timeout")
+		}
+	}
+	return nil
 }
 
 // SetDeadline sets the read and write deadlines associated with the connection.
@@ -43,26 +82,58 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 //
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (v *conn) Close() error {
+	var err error
 	v.closeOnce.Do(func() {
-		if v.closed {
+		if v.Modem.closed {
+			err = ErrModemClosed
 			return
 		}
+		defer func() {
+			// Discard any remaining data
+			v.dataConn.SetReadDeadline(time.Now().Add(time.Second))
+			n, _ := io.Copy(io.Discard, v.dataConn)
+			debugPrint("close: discarded %d bytes of remaining data", n)
+		}()
 		v.closing = true
-		connectChange, cancel := v.connectChange.Subscribe()
+		connectChange, cancel := v.cmds.Subscribe(disconnected)
 		defer cancel()
-		if v.lastState == disconnected {
+		if v.connectedState == disconnected {
+			// Connection is already closed.
 			return
 		}
+
+		// Workaround for race condition between write and close
+		// (since cmd and data are not synchronized being on separate TCP sockets):
+		// VARA promise that DISCONNECT will flush the TX buffer before closing the connection, but we
+		// need to make sure the last data written have reached the modem before calling DISCONNECT.
+		if dur := time.Since(v.lastWrite); dur < 2*time.Second {
+			<-time.After(2*time.Second - dur)
+		}
+
 		v.writeCmd("DISCONNECT")
-		<-connectChange
+		select {
+		case _, ok := <-connectChange:
+			if !ok {
+				err = ErrModemClosed
+				return
+			}
+			// This is the happy path. Connection was gracefully closed.
+			err = nil
+			return
+		case <-time.After(60 * time.Second):
+			debugPrint("disconnect timeout - aborting connection")
+			v.Abort()
+			err = fmt.Errorf("disconnect timeout - connection aborted")
+			return
+		}
 	})
-	return nil
+	return err
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {
-	connectChange, cancel := v.connectChange.Subscribe()
+	connectChange, cancel := v.cmds.Subscribe(disconnected)
 	defer cancel()
-	if v.lastState != connected {
+	if v.connectedState != connected {
 		debugPrint("read: not connected")
 		return 0, io.EOF
 	}
@@ -83,57 +154,95 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	}()
 	select {
 	case res := <-ready:
+		// We got data. Return it :)
 		return res.n, res.err
-	case <-connectChange:
+	case _, ok := <-connectChange:
+		if !ok {
+			return 0, ErrModemClosed
+		}
+		debugPrint("read: disconnected while reading")
+		// Workaround for race condition between cmd and data conn.
+		// The data was of course sent before the DISCONNECT, but they are received
+		// out of order since they're sent from the modem on independent streams.
+		select {
+		case res := <-ready:
+			debugPrint("read: got data after disconnect")
+			return res.n, res.err
+		case <-time.After(2 * time.Second):
+			debugPrint("read: timeout waiting for data after disconnect")
+			return 0, io.EOF
+		}
 		// Set a read deadline to ensure the Read call is cancelled.
-		debugPrint("read: disconnected while writing")
 		v.dataConn.SetReadDeadline(time.Now())
 		return 0, io.EOF
 	}
 }
 
 func (v *conn) Write(b []byte) (int, error) {
-	connectChange, cancel := v.connectChange.Subscribe()
+	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
 	defer cancel()
-	if v.closing && v.lastState == connected {
-		// VARA keeps accepting data after a DISCONNECT command has been, adding it to the TX buffer queue.
-		// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
-		// keep feeding the buffer after we've sent the DISCONNECT command.
-		// To do this, we block until the disconnect is complete.
-		<-connectChange
-	}
-	if v.lastState != connected {
+	if v.connectedState != connected {
 		return 0, io.EOF
 	}
 
-	queued, done := v.bufferCount.notifyQueued()
-	defer done()
-	n, err := v.dataConn.Write(b)
-	if err != nil {
-		return n, err
+	// Throttle to match the transmitted data rate by blocking if the tx buffer size is getting much bigger
+	// than the payloads being sent.
+	//
+	// Yes, a magic number. We don't know the actual on-air packet length and/or max outstanding frames of
+	// the mode in use. We also don't know how often the modem sends BUFFER updates. If the number is too
+	// small, we end up causing unnecessary IDLE time. Too large and we end up with non-blocking writes and
+	// a very large TX buffer causing Close() to block for a very long time. This magic number seem to work
+	// well enough for both VARA FM and VARA HF.
+	const magicNumber = 7
+
+	bufferTimeout := time.NewTimer(time.Minute)
+	defer bufferTimeout.Stop()
+	bufferCount := v.bufferCount.get()
+	for bufferCount >= magicNumber*len(b) && !v.closing {
+		debugPrint("write: buffer full (%d >= %d)", bufferCount, magicNumber*len(b))
+		select {
+		case cmd, ok := <-cmds:
+			switch {
+			case !ok:
+				return 0, ErrModemClosed
+			case cmd == disconnected:
+				debugPrint("write: state changed while waiting for buffer space")
+				return 0, io.EOF
+			default:
+				bufferCount = parseBuffer(cmd)
+				if !bufferTimeout.Stop() {
+					<-bufferTimeout.C
+				}
+				bufferTimeout.Reset(time.Minute)
+			}
+		case <-bufferTimeout.C:
+			// This is most likely due to a app<->tnc bug, but might also be due
+			// to stalled connection.
+			return 0, fmt.Errorf("write: buffer timeout")
+		}
 	}
-	// Block until the modem confirms that data has been added to the
-	// transmit buffer queue. This is needed to ensure TxBufferLen are
-	// able to report the correct number of bytes, as well as making the
-	// Write call behave more or less synchronous with regards to the
-	// transmitted data (rate).
-	t := time.NewTimer(10 * time.Minute)
-	defer t.Stop()
-	select {
-	case <-queued:
-		return n, nil
-	case <-connectChange:
+
+	// VARA keeps accepting data after a DISCONNECT command has been sent, adding it to the TX buffer queue.
+	// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
+	// keep feeding the buffer after we've sent the DISCONNECT command.
+	// To do this, we block until the disconnect is complete.
+	if v.closing && v.connectedState == connected {
+		debugPrint("write: waiting for disconnect to complete...")
+		for cmd := range cmds {
+			if cmd != disconnected {
+				continue
+			}
+			break
+		}
+		debugPrint("write: disconnect complete")
 		return 0, io.EOF
-	case <-t.C:
-		// Modem didn't ACK the write. This is most likely due to a
-		// app<->tnc bug, but might also be due to stalled connection.
-		//
-		// This was previously a one minute timeout, but increased because
-		// it seems newer versions of VARA HF is no longer guaranteed to
-		// send BUFFER when data is added to the tx buffer, only when the
-		// remote end ACKs (despite the spec saying otherwise).
-		return n, fmt.Errorf("write queue timeout")
 	}
+
+	// Modem is ready to receive more data :-)
+	debugPrint("write: sending %d bytes", len(b))
+	v.bufferCount.incr(len(b))
+	v.lastWrite = time.Now()
+	return v.dataConn.Write(b)
 }
 
 // TxBufferLen implements the transport.TxBuffer interface.

@@ -84,6 +84,7 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 func (v *conn) Close() error {
 	var err error
 	v.closeOnce.Do(func() {
+		debugPrint("Closing connection...")
 		if v.Modem.closed {
 			err = ErrModemClosed
 			return
@@ -157,24 +158,26 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		// We got data. Return it :)
 		return res.n, res.err
 	case _, ok := <-connectChange:
+		debugPrint("read: disconnected while reading")
 		if !ok {
 			return 0, ErrModemClosed
 		}
-		debugPrint("read: disconnected while reading")
 		// Workaround for race condition between cmd and data conn.
 		// The data was of course sent before the DISCONNECT, but they are received
 		// out of order since they're sent from the modem on independent streams.
 		select {
 		case res := <-ready:
-			debugPrint("read: got data after disconnect")
-			return res.n, res.err
+			debugPrint("read: got data (%d bytes) after disconnect (err: %v)", res.n, res.err)
+			if res.err != nil {
+				return res.n, io.EOF
+			}
+			return res.n, nil
 		case <-time.After(2 * time.Second):
 			debugPrint("read: timeout waiting for data after disconnect")
+			// Set a read deadline to ensure the above Read call is cancelled after we return.
+			v.dataConn.SetReadDeadline(time.Now())
 			return 0, io.EOF
 		}
-		// Set a read deadline to ensure the Read call is cancelled.
-		v.dataConn.SetReadDeadline(time.Now())
-		return 0, io.EOF
 	}
 }
 

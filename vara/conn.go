@@ -44,14 +44,18 @@ func (v *conn) Flush() error {
 	for count > 0 {
 		select {
 		case cmd, ok := <-cmds:
-			if !ok || cmd == disconnected {
+			switch {
+			case !ok:
+				return ErrModemClosed
+			case cmd == disconnected:
 				return io.EOF
+			default:
+				if !timeout.Stop() {
+					<-timeout.C
+				}
+				timeout.Reset(time.Minute)
+				count = parseBuffer(cmd)
 			}
-			if !timeout.Stop() {
-				<-timeout.C
-			}
-			timeout.Reset(time.Minute)
-			count = parseBuffer(cmd)
 		case <-timeout.C:
 			return errors.New("flush: buffer timeout")
 		}
@@ -81,6 +85,7 @@ func (v *conn) Close() error {
 	var err error
 	v.closeOnce.Do(func() {
 		if v.Modem.closed {
+			err = ErrModemClosed
 			return
 		}
 		defer func() {
@@ -107,13 +112,19 @@ func (v *conn) Close() error {
 
 		v.writeCmd("DISCONNECT")
 		select {
-		case <-connectChange:
+		case _, ok := <-connectChange:
+			if !ok {
+				err = ErrModemClosed
+				return
+			}
 			// This is the happy path. Connection was gracefully closed.
 			err = nil
+			return
 		case <-time.After(60 * time.Second):
 			debugPrint("disconnect timeout - aborting connection")
 			v.Abort()
 			err = fmt.Errorf("disconnect timeout - connection aborted")
+			return
 		}
 	})
 	return err
@@ -145,7 +156,10 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	case res := <-ready:
 		// We got data. Return it :)
 		return res.n, res.err
-	case <-connectChange:
+	case _, ok := <-connectChange:
+		if !ok {
+			return 0, ErrModemClosed
+		}
 		debugPrint("read: disconnected while reading")
 		// Workaround for race condition between cmd and data conn.
 		// The data was of course sent before the DISCONNECT, but they are received
@@ -188,15 +202,19 @@ func (v *conn) Write(b []byte) (int, error) {
 		debugPrint("write: buffer full (%d >= %d)", bufferCount, magicNumber*len(b))
 		select {
 		case cmd, ok := <-cmds:
-			if !ok || cmd == disconnected {
+			switch {
+			case !ok:
+				return 0, ErrModemClosed
+			case cmd == disconnected:
 				debugPrint("write: state changed while waiting for buffer space")
 				return 0, io.EOF
+			default:
+				bufferCount = parseBuffer(cmd)
+				if !bufferTimeout.Stop() {
+					<-bufferTimeout.C
+				}
+				bufferTimeout.Reset(time.Minute)
 			}
-			bufferCount = parseBuffer(cmd)
-			if !bufferTimeout.Stop() {
-				<-bufferTimeout.C
-			}
-			bufferTimeout.Reset(time.Minute)
 		case <-bufferTimeout.C:
 			// This is most likely due to a app<->tnc bug, but might also be due
 			// to stalled connection.

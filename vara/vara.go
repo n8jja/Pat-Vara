@@ -15,6 +15,8 @@ import (
 
 const network = "vara"
 
+var ErrModemClosed = errors.New("modem closed")
+
 var errNotImplemented = errors.New("not implemented")
 
 // ModemConfig defines configuration options for connecting with the VARA modem program.
@@ -209,6 +211,9 @@ func disconnectTCP(name string, port *net.TCPConn) *net.TCPConn {
 // wrapper around m.cmdConn.Write
 func (m *Modem) writeCmd(cmd string) error {
 	debugPrint3("writing cmd: %v", cmd)
+	if m.closed {
+		return ErrModemClosed
+	}
 	m.cmdConn.SetWriteDeadline(time.Now().Add(time.Second * 5))
 	_, err := m.cmdConn.Write([]byte(cmd + "\r"))
 	if err != nil {

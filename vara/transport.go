@@ -25,7 +25,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 		return nil, transport.ErrUnsupportedScheme
 	}
 	if m.closed {
-		return nil, errors.New("modem closed")
+		return nil, ErrModemClosed
 	}
 
 	// TODO: Handle race condition here. Should prevent concurrent dialing.
@@ -79,7 +79,9 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	}()
 
 	// Block until connected state is updated
-	switch cmd := <-cmds; {
+	switch cmd, ok := <-cmds; {
+	case !ok:
+		return nil, ErrModemClosed
 	case strings.HasPrefix(cmd, connected):
 		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
 		//         Should the newState include remote address?

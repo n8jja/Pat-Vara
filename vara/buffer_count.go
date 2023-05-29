@@ -35,14 +35,16 @@ func (m *bufferCount) set(n int) {
 // The returned channel is buffered, allowing the receiver to defer reading
 // from the channel without missing out on the next BUFFER value sent from the
 // modem.
-func (m *bufferCount) notifyQueued() <-chan int {
+func (m *bufferCount) notifyQueued() (c <-chan int, done func()) {
 	nextUpdate := make(chan int, 1)
+	stop := make(chan struct{})
 	go func() {
 		defer close(nextUpdate)
-		for n := range m.ch {
+		select {
+		case n := <-m.ch:
 			nextUpdate <- n
-			return
+		case <-stop:
 		}
 	}()
-	return nextUpdate
+	return nextUpdate, func() { close(stop) }
 }

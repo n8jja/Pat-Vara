@@ -11,8 +11,17 @@ import (
 // Wrapper for the data port connection we hand to clients. Implements net.Conn.
 type conn struct {
 	*Modem
-	closeOnce  sync.Once
 	remoteCall string
+	closeOnce  sync.Once
+	closing    bool
+}
+
+func (m *Modem) newConn(remoteCall string) *conn {
+	m.dataConn.SetDeadline(time.Time{}) // Reset any previous deadlines
+	return &conn{
+		Modem:      m,
+		remoteCall: remoteCall,
+	}
 }
 
 // SetDeadline sets the read and write deadlines associated with the connection.
@@ -38,6 +47,7 @@ func (v *conn) Close() error {
 		if v.closed {
 			return
 		}
+		v.closing = true
 		connectChange, cancel := v.connectChange.Subscribe()
 		defer cancel()
 		if v.lastState == disconnected {
@@ -53,6 +63,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 	connectChange, cancel := v.connectChange.Subscribe()
 	defer cancel()
 	if v.lastState != connected {
+		debugPrint("read: not connected")
 		return 0, io.EOF
 	}
 
@@ -65,6 +76,9 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		defer close(ready)
 		v.dataConn.SetReadDeadline(time.Time{}) // Disable read deadline
 		n, err = v.dataConn.Read(b)
+		if err != nil {
+			debugPrint("read error: %v", err)
+		}
 		ready <- res{n, err}
 	}()
 	select {
@@ -72,6 +86,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		return res.n, res.err
 	case <-connectChange:
 		// Set a read deadline to ensure the Read call is cancelled.
+		debugPrint("read: disconnected while writing")
 		v.dataConn.SetReadDeadline(time.Now())
 		return 0, io.EOF
 	}
@@ -80,11 +95,19 @@ func (v *conn) Read(b []byte) (n int, err error) {
 func (v *conn) Write(b []byte) (int, error) {
 	connectChange, cancel := v.connectChange.Subscribe()
 	defer cancel()
+	if v.closing && v.lastState == connected {
+		// VARA keeps accepting data after a DISCONNECT command has been, adding it to the TX buffer queue.
+		// Since VARA keeps the connection open until the TX buffer is empty, we need to make sure we don't
+		// keep feeding the buffer after we've sent the DISCONNECT command.
+		// To do this, we block until the disconnect is complete.
+		<-connectChange
+	}
 	if v.lastState != connected {
 		return 0, io.EOF
 	}
 
-	queued := v.bufferCount.notifyQueued()
+	queued, done := v.bufferCount.notifyQueued()
+	defer done()
 	n, err := v.dataConn.Write(b)
 	if err != nil {
 		return n, err
@@ -94,12 +117,21 @@ func (v *conn) Write(b []byte) (int, error) {
 	// able to report the correct number of bytes, as well as making the
 	// Write call behave more or less synchronous with regards to the
 	// transmitted data (rate).
+	t := time.NewTimer(10 * time.Minute)
+	defer t.Stop()
 	select {
 	case <-queued:
 		return n, nil
 	case <-connectChange:
 		return 0, io.EOF
-	case <-time.After(time.Minute):
+	case <-t.C:
+		// Modem didn't ACK the write. This is most likely due to a
+		// app<->tnc bug, but might also be due to stalled connection.
+		//
+		// This was previously a one minute timeout, but increased because
+		// it seems newer versions of VARA HF is no longer guaranteed to
+		// send BUFFER when data is added to the tx buffer, only when the
+		// remote end ACKs (despite the spec saying otherwise).
 		return n, fmt.Errorf("write queue timeout")
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 func TestInterfaces(t *testing.T) {
-	var modem, _ = NewModem("varafm", "N0CALL", ModemConfig{})
+	modem, _ := NewModem("varafm", "N0CALL", ModemConfig{})
 
 	// Ensure modem implements the necessary interfaces
 	// (https://github.com/la5nta/pat/wiki/Adding-transports)
@@ -16,7 +16,7 @@ func TestInterfaces(t *testing.T) {
 	// Modem doesn't need to implement net.Conn, but DialURL should return one
 
 	// Ensure modem implements optional interfaces with extended functionality
-	var _ net.Listener = modem
+	var _ net.Listener = &listener{}
 	var _ transport.BusyChannelChecker = modem
 }
 

@@ -46,7 +46,7 @@ type Modem struct {
 	busy           bool
 	cmds           pubSub
 	inboundConns   chan *conn
-	connectedState string
+	connectedState connectedState
 	rig            transport.PTTController
 
 	bufferCount *bufferCount
@@ -54,10 +54,12 @@ type Modem struct {
 	closed      bool
 }
 
+type connectedState int
+
 const (
-	connected    = "CONNECTED"
-	disconnected = "DISCONNECTED"
-	connecting   = "CONNECTING"
+	connected connectedState = iota
+	disconnected
+	connecting
 )
 
 var bandwidths = []string{"500", "2300", "2750"}
@@ -159,19 +161,19 @@ func (m *Modem) Close() error {
 		}()
 
 		// Disconnect if connected
-		connectChange, cancel := m.cmds.Subscribe(disconnected, connecting, connected)
+		connectChange, cancel := m.cmds.Subscribe("DISCONNECTED", "CONNECTED")
 		defer cancel()
 		if m.connectedState != disconnected {
 			// Send DISCONNECT command
 			if err := m.writeCmd("DISCONNECT"); err != nil {
 				// We have already lost connection with the modem, just publish that the state is disconnected and return.
-				m.cmds.Publish(disconnected)
+				m.cmds.Publish("DISCONNECTED")
 				m.handleDisconnected()
 				return
 			}
 			select {
 			case res := <-connectChange:
-				if res != disconnected {
+				if res != "DISCONNECTED" {
 					log.Println("Disconnect failed, aborting!")
 					m.Abort()
 				}
@@ -284,7 +286,6 @@ func (m *Modem) handleCmd(c string) {
 			break
 		}
 		if strings.HasPrefix(c, "CONNECTED ") {
-			m.connectedState = connected
 			m.handleConnected(c)
 			break
 		}
@@ -302,19 +303,20 @@ func (m *Modem) handleCmd(c string) {
 	}
 }
 
-func (m *Modem) handleDisconnected() {
-	m.connectedState = disconnected
-	m.bufferCount.reset()       // reset buffer count in case we had outstanding frames
-	m.setBandwidth(m.bandwidth) // reset bandwidth to default in case it was changed
-}
-
 func (m *Modem) sendPTT(on bool) {
 	if m.rig != nil {
 		_ = m.rig.SetPTT(on)
 	}
 }
 
+func (m *Modem) handleDisconnected() {
+	m.connectedState = disconnected
+	m.bufferCount.reset()       // reset buffer count in case we had outstanding frames
+	m.setBandwidth(m.bandwidth) // reset bandwidth to default in case it was changed
+}
+
 func (m *Modem) handleConnected(cmd string) {
+	m.connectedState = connected
 	parts := strings.Split(cmd, " ")
 	if len(parts) < 3 {
 		panic(fmt.Sprintf("unexpected CONNECTED command: %q", cmd))

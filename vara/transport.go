@@ -56,8 +56,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 
 	// Start connecting
 	m.connectedState = connecting
-	m.cmds.Publish(connecting) // TODO: Can we get rid of this?
-	cmds, cancel := m.cmds.Subscribe(connected, disconnected)
+	cmds, cancel := m.cmds.Subscribe("CONNECTED", "DISCONNECTED")
 	defer cancel()
 	if err := m.writeCmd(fmt.Sprintf("CONNECT %s %s", m.myCall, url.Target)); err != nil {
 		return nil, err
@@ -82,7 +81,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 	switch cmd, ok := <-cmds; {
 	case !ok:
 		return nil, ErrModemClosed
-	case strings.HasPrefix(cmd, connected):
+	case strings.HasPrefix(cmd, "CONNECTED"):
 		// TODO: What if this coincidentally was an inbound connection, or a connection dialed concurrently by another goroutine?
 		//         Should the newState include remote address?
 		//         Or maybe the complete command string instead of this enum?
@@ -101,7 +100,7 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 //
 // If the modem is not connected, this is a no-op.
 func (m *Modem) Disconnect() error {
-	ack, cancel := m.cmds.Subscribe(disconnected)
+	ack, cancel := m.cmds.Subscribe("DISCONNECTED")
 	defer cancel()
 	if m.connectedState == disconnected {
 		return nil
@@ -118,7 +117,7 @@ func (m *Modem) Abort() error {
 	err := m.writeCmd("ABORT")
 	// VARA does not send a DISCONNECTED state change after ABORT if it's
 	// already in the process of disconnecting, so we have to fake it.
-	m.cmds.Publish(disconnected)
+	m.cmds.Publish("DISCONNECTED")
 	m.handleDisconnected()
 	return err
 }

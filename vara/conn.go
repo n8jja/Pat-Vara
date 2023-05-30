@@ -31,7 +31,7 @@ func (m *Modem) newConn(remoteCall string) *conn {
 func (v *conn) Flush() error {
 	debugPrint("Flushing...")
 	defer debugPrint("Flushed")
-	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	cmds, cancel := v.cmds.Subscribe("DISCONNECTED", "BUFFER")
 	defer cancel()
 	if v.closing {
 		return nil
@@ -47,7 +47,7 @@ func (v *conn) Flush() error {
 			switch {
 			case !ok:
 				return ErrModemClosed
-			case cmd == disconnected:
+			case cmd == "DISCONNECTED":
 				return io.EOF
 			default:
 				if !timeout.Stop() {
@@ -96,7 +96,7 @@ func (v *conn) Close() error {
 			debugPrint("close: discarded %d bytes of remaining data", n)
 		}()
 		v.closing = true
-		connectChange, cancel := v.cmds.Subscribe(disconnected)
+		connectChange, cancel := v.cmds.Subscribe("DISCONNECTED")
 		defer cancel()
 		if v.connectedState == disconnected {
 			// Connection is already closed.
@@ -132,7 +132,7 @@ func (v *conn) Close() error {
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {
-	connectChange, cancel := v.cmds.Subscribe(disconnected)
+	connectChange, cancel := v.cmds.Subscribe("DISCONNECTED")
 	defer cancel()
 	if v.connectedState != connected {
 		debugPrint("read: not connected")
@@ -182,7 +182,7 @@ func (v *conn) Read(b []byte) (n int, err error) {
 }
 
 func (v *conn) Write(b []byte) (int, error) {
-	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	cmds, cancel := v.cmds.Subscribe("DISCONNECTED", "BUFFER")
 	defer cancel()
 	if v.connectedState != connected {
 		return 0, io.EOF
@@ -208,7 +208,7 @@ func (v *conn) Write(b []byte) (int, error) {
 			switch {
 			case !ok:
 				return 0, ErrModemClosed
-			case cmd == disconnected:
+			case cmd == "DISCONNECTED":
 				debugPrint("write: state changed while waiting for buffer space")
 				return 0, io.EOF
 			default:
@@ -232,7 +232,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	if v.closing && v.connectedState == connected {
 		debugPrint("write: waiting for disconnect to complete...")
 		for cmd := range cmds {
-			if cmd != disconnected {
+			if cmd != "DISCONNECTED" {
 				continue
 			}
 			break

@@ -31,7 +31,7 @@ func (m *Modem) newConn(remoteCall string) *conn {
 func (v *conn) Flush() error {
 	debugPrint("Flushing...")
 	defer debugPrint("Flushed")
-	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	cmds, cancel := v.cmds.Subscribe("DISCONNECTED", "BUFFER")
 	defer cancel()
 	if v.closing {
 		return nil
@@ -47,7 +47,7 @@ func (v *conn) Flush() error {
 			switch {
 			case !ok:
 				return ErrModemClosed
-			case cmd == disconnected:
+			case cmd == "DISCONNECTED":
 				return io.EOF
 			default:
 				if !timeout.Stop() {
@@ -84,6 +84,7 @@ func (v *conn) RemoteAddr() net.Addr { return Addr{v.remoteCall} }
 func (v *conn) Close() error {
 	var err error
 	v.closeOnce.Do(func() {
+		debugPrint("Closing connection...")
 		if v.Modem.closed {
 			err = ErrModemClosed
 			return
@@ -95,7 +96,7 @@ func (v *conn) Close() error {
 			debugPrint("close: discarded %d bytes of remaining data", n)
 		}()
 		v.closing = true
-		connectChange, cancel := v.cmds.Subscribe(disconnected)
+		connectChange, cancel := v.cmds.Subscribe("DISCONNECTED")
 		defer cancel()
 		if v.connectedState == disconnected {
 			// Connection is already closed.
@@ -131,7 +132,7 @@ func (v *conn) Close() error {
 }
 
 func (v *conn) Read(b []byte) (n int, err error) {
-	connectChange, cancel := v.cmds.Subscribe(disconnected)
+	connectChange, cancel := v.cmds.Subscribe("DISCONNECTED")
 	defer cancel()
 	if v.connectedState != connected {
 		debugPrint("read: not connected")
@@ -157,29 +158,31 @@ func (v *conn) Read(b []byte) (n int, err error) {
 		// We got data. Return it :)
 		return res.n, res.err
 	case _, ok := <-connectChange:
+		debugPrint("read: disconnected while reading")
 		if !ok {
 			return 0, ErrModemClosed
 		}
-		debugPrint("read: disconnected while reading")
 		// Workaround for race condition between cmd and data conn.
 		// The data was of course sent before the DISCONNECT, but they are received
 		// out of order since they're sent from the modem on independent streams.
 		select {
 		case res := <-ready:
-			debugPrint("read: got data after disconnect")
-			return res.n, res.err
+			debugPrint("read: got data (%d bytes) after disconnect (err: %v)", res.n, res.err)
+			if res.err != nil {
+				return res.n, io.EOF
+			}
+			return res.n, nil
 		case <-time.After(2 * time.Second):
 			debugPrint("read: timeout waiting for data after disconnect")
+			// Set a read deadline to ensure the above Read call is cancelled after we return.
+			v.dataConn.SetReadDeadline(time.Now())
 			return 0, io.EOF
 		}
-		// Set a read deadline to ensure the Read call is cancelled.
-		v.dataConn.SetReadDeadline(time.Now())
-		return 0, io.EOF
 	}
 }
 
 func (v *conn) Write(b []byte) (int, error) {
-	cmds, cancel := v.cmds.Subscribe(disconnected, "BUFFER")
+	cmds, cancel := v.cmds.Subscribe("DISCONNECTED", "BUFFER")
 	defer cancel()
 	if v.connectedState != connected {
 		return 0, io.EOF
@@ -205,7 +208,7 @@ func (v *conn) Write(b []byte) (int, error) {
 			switch {
 			case !ok:
 				return 0, ErrModemClosed
-			case cmd == disconnected:
+			case cmd == "DISCONNECTED":
 				debugPrint("write: state changed while waiting for buffer space")
 				return 0, io.EOF
 			default:
@@ -229,7 +232,7 @@ func (v *conn) Write(b []byte) (int, error) {
 	if v.closing && v.connectedState == connected {
 		debugPrint("write: waiting for disconnect to complete...")
 		for cmd := range cmds {
-			if cmd != disconnected {
+			if cmd != "DISCONNECTED" {
 				continue
 			}
 			break

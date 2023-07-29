@@ -2,7 +2,7 @@
 A VARA transporter for the Pat Winlink Open Source project.
 
 ## Status:
-**JULY 30, 2023**: v1.1.3 released wotj improvements in the handling of unonown/unexpected commands received from the TNC. 
+**JULY 30, 2023**: v1.1.3 released with improvements in the handling of unonown/unexpected commands received from the TNC. 
 
 **MAY 29, 2023**: v1.1.1 released with minor bug fixes and improvements.
 

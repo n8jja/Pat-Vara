@@ -278,6 +278,10 @@ func (m *Modem) handleCmd(c string) {
 		// nothing to do
 	case "LINK UNREGISTERED", "LINK REGISTERED":
 		// nothing to do
+	case "ENCRYPTION DISABLED", "ENCRYPTION READY":
+		// nothing to do
+	case "UNENCRYPTED LINK", "ENCRYPTED LINK":
+		// nothing to do
 	case "DISCONNECTED":
 		m.handleDisconnected()
 	default:
@@ -299,7 +303,7 @@ func (m *Modem) handleCmd(c string) {
 		if strings.HasPrefix(c, "VERSION") {
 			break
 		}
-		log.Printf("got a vara command I wasn't expecting: %v", c)
+		debugPrint("got a vara command I wasn't expecting: %q", c)
 	}
 }
 

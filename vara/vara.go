@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/imdario/mergo"
+	"dario.cat/mergo"
 	"github.com/la5nta/wl2k-go/transport"
 )
 

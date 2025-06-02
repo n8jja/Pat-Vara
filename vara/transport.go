@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/la5nta/wl2k-go/transport"
 )
@@ -51,6 +52,13 @@ func (m *Modem) DialURLContext(ctx context.Context, url *transport.URL) (net.Con
 			if err := m.writeCmd("WINLINK SESSION"); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// Handle busy channel with BusyFunc if provided.
+	if m.busyFunc != nil {
+		if abort := m.waitIfBusy(ctx, m.busyFunc); abort {
+			return nil, fmt.Errorf("aborted while waiting for clear channel")
 		}
 	}
 
@@ -152,4 +160,24 @@ func (m *Modem) Busy() bool {
 // If nil, the PTT request from the TNC is ignored. VOX may still work.
 func (m *Modem) SetPTT(ptt transport.PTTController) {
 	m.rig = ptt
+}
+
+// waitIfBusy waits for signal from the BusyFunc if the channel is busy.
+func (m *Modem) waitIfBusy(ctx context.Context, busyFunc BusyFunc) (abort bool) {
+	if !m.Busy() {
+		return false
+	}
+
+	// Start a goroutine to cancel the context if/when the channel clears
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		defer cancel()
+		for m.Busy() && ctx.Err() == nil {
+			time.Sleep(300 * time.Millisecond)
+		}
+	}()
+
+	// Block until busyFunc returns
+	return busyFunc(ctx)
 }

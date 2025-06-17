@@ -1,6 +1,7 @@
 package vara
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -44,6 +45,7 @@ type Modem struct {
 	cmdConn        *net.TCPConn
 	dataConn       *net.TCPConn
 	busy           bool
+	busyFunc       BusyFunc
 	cmds           pubSub
 	inboundConns   chan *conn
 	connectedState connectedState
@@ -89,6 +91,16 @@ func NewModem(scheme string, myCall string, config ModemConfig) (*Modem, error) 
 	}
 	return m, nil
 }
+
+// BusyFunc is a function that is called when the dialed channel is busy.
+//
+// If the channel is busy, the dialer blocks on this function call until it returns.
+// The provided context is cancelled if/when the channel clears.
+// The return value determines if the dialer should abort or continue dialing.
+type BusyFunc func(context.Context) (abort bool)
+
+// SetBusyFunc sets the function that will be called if the channel is busy when dialing.
+func (m *Modem) SetBusyFunc(fn BusyFunc) { m.busyFunc = fn }
 
 // Start establishes TCP connections with the VARA modem program. This must be called before
 // sending commands to the modem.

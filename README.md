@@ -2,6 +2,7 @@
 A VARA transporter for the Pat Winlink Open Source project.
 
 ## Status:
+**JUN 18, 2025** v1.2.0 released. Adds [callback-based busy channel handling](https://github.com/n8jja/Pat-Vara/pull/44)
 **OCT 19, 2023**: v1.1.4 released with minor bug fixes and improvements.
 
 **JULY 30, 2023**: v1.1.3 released with improvements in the handling of unonown/unexpected commands received from the TNC. 

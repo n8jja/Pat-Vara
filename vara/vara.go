@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,10 +51,15 @@ type Modem struct {
 	inboundConns   chan *conn
 	connectedState connectedState
 	rig            transport.PTTController
-
-	bufferCount *bufferCount
-	closeOnce   sync.Once
-	closed      bool
+	varaFM         bool
+	varaFMWIDE     bool
+	vara2750       bool
+	currentBitrate int
+	maxBitRate     int
+	SN             float64
+	bufferCount    *bufferCount
+	closeOnce      sync.Once
+	closed         bool
 }
 
 type connectedState int
@@ -286,6 +292,7 @@ func (m *Modem) handleCmd(c string) {
 		// nothing to do
 	case "PENDING":
 		// nothing to do
+
 	case "CANCELPENDING":
 		// nothing to do
 	case "LINK UNREGISTERED", "LINK REGISTERED":
@@ -303,8 +310,34 @@ func (m *Modem) handleCmd(c string) {
 		}
 		if strings.HasPrefix(c, "CONNECTED ") {
 			m.handleConnected(c)
+			if strings.Contains(c, "WIDE") {
+				m.varaFMWIDE = true
+				EstimateBitRate(m)
+			}
+			if strings.Contains(c, "2750") {
+				m.vara2750 = true
+				EstimateBitRate(m)
+			}
+			if strings.Contains(c, "2300") {
+				m.vara2750 = true
+				EstimateBitRate(m)
+			}
 			break
 		}
+
+		if strings.HasPrefix(c, "BITRATE") {
+			debugPrint("got BITRATE %q", c)
+			m.currentBitrate = parseBitrate(c)
+			EstimateBitRate(m)
+			break
+		}
+		if strings.HasPrefix(c, "SN ") {
+			debugPrint("got SN %q", c)
+			m.SN = parseSN(c)
+			EstimateBitRate(m)
+			break
+		}
+
 		if strings.HasPrefix(c, "REGISTERED") {
 			parts := strings.Split(c, " ")
 			if len(parts) > 1 {
@@ -312,6 +345,11 @@ func (m *Modem) handleCmd(c string) {
 			}
 			break
 		}
+		if strings.HasPrefix(c, "VERSION VARA FM") {
+			m.varaFM = true
+			break
+		}
+
 		if strings.HasPrefix(c, "VERSION") {
 			break
 		}
@@ -329,6 +367,13 @@ func (m *Modem) handleDisconnected() {
 	m.connectedState = disconnected
 	m.bufferCount.reset()       // reset buffer count in case we had outstanding frames
 	m.setBandwidth(m.bandwidth) // reset bandwidth to default in case it was changed
+	// Reset the vars for the chanell speed estimation
+	m.varaFM = false
+	m.varaFMWIDE = false
+	m.vara2750 = false
+	m.currentBitrate = 0
+	m.maxBitRate = 0
+	m.SN = 0
 }
 
 func (m *Modem) handleConnected(cmd string) {
@@ -367,4 +412,112 @@ func (m *Modem) Version() (string, error) {
 		return "", errors.New("VERSION not implemented")
 	}
 	return strings.TrimPrefix(str, "VERSION "), nil
+}
+
+func parseBitrate(s string) int {
+	parts := strings.Split(s, " ")
+	if len(parts) < 5 {
+		debugPrint("BITRATE not complete  %q", s)
+		return -1
+	}
+	if parts[5] == "TX" {
+		n, _ := strconv.Atoi(parts[3])
+		return n
+	}
+	return -1
+}
+
+func parseSN(s string) float64 {
+	rs := strings.Replace(s, "SN ", "", -1)
+	n, _ := strconv.ParseFloat(rs, 64)
+	return n
+
+}
+
+func EstimateBitRate(m *Modem) int {
+	// Take the maximum recieved bitrate
+	ebr := m.currentBitrate
+	if ebr > m.maxBitRate {
+		m.maxBitRate = ebr
+		debugPrint("Max bit rate set to %d by BITRATE", m.currentBitrate)
+	}
+
+	// Try to estimate the max bitrate based on the mode and the SN
+	if m.varaFM {
+		if m.varaFMWIDE {
+			debugPrint("Estimate SN vara FM Wide %f", m.SN)
+			ebr = 1098
+			if m.SN > 5 {
+				ebr = 4040
+			}
+			if m.SN > 10 {
+				ebr = 5387
+			}
+			if m.SN > 20 {
+				ebr = 16832
+			}
+		} else {
+			debugPrint("Estimate SN vara FM Narrow %f", m.SN)
+			ebr = 1098
+			if m.SN > 5 {
+				ebr = 4040
+			}
+			if m.SN > 10 {
+				ebr = 7185
+			}
+			if m.SN > 20 {
+				ebr = 10585
+			}
+		}
+	} else {
+		if m.vara2750 {
+			debugPrint("Estimate SN vara HF 2750 %f", m.SN)
+			ebr = 150
+			if m.SN > 5 {
+				ebr = 300
+			}
+			if m.SN > 10 {
+				ebr = 600
+			}
+			if m.SN > 15 {
+				ebr = 1600
+			}
+			if m.SN > 20 {
+				ebr = 3333
+			}
+			if m.SN > 25 {
+				ebr = 4933
+			}
+			if m.SN > 30 {
+				ebr = 6000
+			}
+		} else {
+			debugPrint("Estimate SN vara HF 500 %f", m.SN)
+			ebr = 50
+			if m.SN > 5 {
+				ebr = 133
+			}
+			if m.SN > 10 {
+				ebr = 466
+			}
+			if m.SN > 15 {
+				ebr = 800
+			}
+			if m.SN > 20 {
+				ebr = 1066
+			}
+			if m.SN > 25 {
+				ebr = 1333
+			}
+			if m.SN > 30 {
+				ebr = 1543
+			}
+		}
+	}
+
+	if ebr > m.maxBitRate {
+		m.maxBitRate = ebr
+		debugPrint("Max bit rate set to %d by SN", ebr)
+	}
+	return m.maxBitRate
 }

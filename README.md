@@ -2,6 +2,8 @@
 A VARA transporter for the Pat Winlink Open Source project.
 
 ## Status:
+** mars 14 2025** : vtbd new algorithm to estimate the comm buffer size
+
 **JUN 18, 2025**: v1.2.0 released. Adds [callback-based busy channel handling](https://github.com/n8jja/Pat-Vara/pull/44)
 
 **OCT 19, 2023**: v1.1.4 released with minor bug fixes and improvements.

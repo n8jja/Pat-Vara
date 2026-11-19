@@ -8,6 +8,7 @@ import (
 type pubSub struct {
 	in        chan string
 	req       chan subscriber
+	done      chan struct{} // closed by Close
 	closeOnce *sync.Once
 }
 
@@ -29,12 +30,16 @@ func (s subscriber) wants(v string) bool {
 	return false
 }
 
-func (pb pubSub) Close() { pb.closeOnce.Do(func() { close(pb.in) }) }
+// Close stops the publisher. Publish and Subscribe may still be called
+// afterwards (cmdListen can publish a line it read while the modem closes):
+// Publish drops the value and Subscribe returns a closed channel.
+func (pb pubSub) Close() { pb.closeOnce.Do(func() { close(pb.done) }) }
 
 func newPubSub() pubSub {
 	pb := pubSub{
 		in:        make(chan string),
 		req:       make(chan subscriber),
+		done:      make(chan struct{}),
 		closeOnce: new(sync.Once),
 	}
 	go func() {
@@ -47,10 +52,9 @@ func newPubSub() pubSub {
 		}()
 		for {
 			select {
-			case v, ok := <-pb.in:
-				if !ok {
-					return
-				}
+			case <-pb.done:
+				return
+			case v := <-pb.in:
 				for i := 0; i < len(subscribers); i++ {
 					s := subscribers[i]
 					if !s.wants(v) {
@@ -61,12 +65,11 @@ func newPubSub() pubSub {
 						subscribers = append(subscribers[:i], subscribers[i+1:]...)
 						i--
 					case s.c <- v:
+					case <-pb.done:
+						return
 					}
 				}
-			case req, ok := <-pb.req:
-				if !ok {
-					return
-				}
+			case req := <-pb.req:
 				subscribers = append(subscribers, req)
 			}
 		}
@@ -75,13 +78,20 @@ func newPubSub() pubSub {
 }
 
 func (in pubSub) Publish(v string) {
-	in.in <- v
+	select {
+	case in.in <- v:
+	case <-in.done:
+	}
 }
 
 func (in pubSub) Subscribe(prefix ...string) (<-chan string, func()) {
 	c := make(chan string, 1)
 	q := make(chan struct{}, 1)
-	in.req <- subscriber{c, q, prefix}
+	select {
+	case in.req <- subscriber{c, q, prefix}:
+	case <-in.done:
+		close(c)
+	}
 	return c, func() {
 		select {
 		case q <- struct{}{}:
